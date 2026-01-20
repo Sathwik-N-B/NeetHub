@@ -1,7 +1,7 @@
 import { error, log } from './logger';
 import type { RepoConfig } from './storage';
 
-const CLIENT_ID = '<set-your-github-oauth-app-client-id>';
+const CLIENT_ID = 'Ov23likqHQmClRLa1Vas';
 
 export type DeviceFlowStart = {
   deviceCode: string;
@@ -19,15 +19,22 @@ export async function startDeviceFlow(scope = 'repo'): Promise<DeviceFlowStart> 
 
   const response = await fetch('https://github.com/login/device/code', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
     body: params.toString(),
   });
 
   if (!response.ok) {
-    throw new Error(`GitHub device flow start failed: ${response.status}`);
+    const text = await response.text();
+    throw new Error(`GitHub device flow start failed: ${response.status} ${text || ''}`.trim());
   }
 
   const payload = await response.json();
+  if (payload.error) {
+    throw new Error(payload.error_description ?? payload.error);
+  }
   return {
     deviceCode: payload.device_code,
     userCode: payload.user_code,

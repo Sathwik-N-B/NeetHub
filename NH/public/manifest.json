@@ -4,12 +4,12 @@
   "version": "0.1.0",
   "description": "Automatically push NeetCode submissions to GitHub.",
   "permissions": ["storage", "notifications", "tabs", "scripting"],
-  "host_permissions": ["https://neetcode.io/*", "https://api.github.com/*"],
+  "host_permissions": ["https://neetcode.io/*", "https://api.github.com/*", "https://github.com/*"],
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "src/popup/popup.html",
     "default_title": "NeetHub"
   },
-  "options_page": "options.html",
+  "options_page": "src/options/options.html",
   "background": {
     "service_worker": "background.js",
     "type": "module"

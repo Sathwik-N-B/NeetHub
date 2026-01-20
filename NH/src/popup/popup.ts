@@ -15,6 +15,11 @@ async function init() {
   const settings = (await chrome.runtime.sendMessage({ type: 'get-settings' })) as Settings;
   populate(settings);
 
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.settings?.newValue) return;
+    populate(changes.settings.newValue as Settings);
+  });
+
   saveRepoBtn?.addEventListener('click', saveRepo);
   uploadCheckbox?.addEventListener('change', toggleUpload);
   authBtn?.addEventListener('click', startAuth);
@@ -47,9 +52,11 @@ async function toggleUpload() {
 }
 
 async function startAuth() {
-  const flow = await chrome.runtime.sendMessage({ type: 'start-auth' });
-  if (flow?.verificationUri && flow?.userCode) {
-    setStatus(`Visit ${flow.verificationUri} and enter ${flow.userCode}`);
+  const response = await chrome.runtime.sendMessage({ type: 'start-auth' });
+  if (response?.ok && response.flow?.verificationUri && response.flow?.userCode) {
+    setStatus(`Visit ${response.flow.verificationUri} and enter ${response.flow.userCode}`);
+  } else if (response?.error) {
+    setStatus(`Auth failed: ${response.error}`);
   } else {
     setStatus('Failed to start auth');
   }

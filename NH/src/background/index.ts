@@ -38,30 +38,36 @@ async function handleMessage(message: unknown): Promise<unknown> {
 }
 
 async function handleAuth() {
-  const flow = await startDeviceFlow();
-  log('Device flow started');
+  try {
+    const flow = await startDeviceFlow();
+    log('Device flow started');
 
-  const settings = await getSettings();
-  await saveSettings({ ...settings, auth: { deviceCode: flow.deviceCode } });
+    const settings = await getSettings();
+    await saveSettings({ ...settings, auth: { deviceCode: flow.deviceCode } });
 
-  void chrome.notifications.create({
-    type: 'basic',
-    iconUrl: NOTIFICATION_ICON,
-    title: 'NeetHub',
-    message: `Authorize: ${flow.userCode} at ${flow.verificationUri}`,
-  });
+    void chrome.notifications.create({
+      type: 'basic',
+      iconUrl: NOTIFICATION_ICON,
+      title: 'NeetHub',
+      message: `Authorize: ${flow.userCode} at ${flow.verificationUri}`,
+    });
 
-  // Poll in background; errors logged.
-  void pollForToken(flow.deviceCode, flow.interval)
-    .then(async (token) => {
-      const latest = await getSettings();
-      const expiresAt = Date.now() + flow.expiresIn * 1000;
-      await saveSettings({ ...latest, auth: { accessToken: token, expiresAt } });
-      log('GitHub token saved');
-    })
-    .catch((err) => error('Auth polling failed', err));
+    // Poll in background; errors logged.
+    void pollForToken(flow.deviceCode, flow.interval)
+      .then(async (token) => {
+        const latest = await getSettings();
+        const expiresAt = Date.now() + flow.expiresIn * 1000;
+        await saveSettings({ ...latest, auth: { accessToken: token, expiresAt } });
+        log('GitHub token saved');
+      })
+      .catch((err) => error('Auth polling failed', err));
 
-  return flow;
+    return { ok: true, flow };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    error('Auth start failed', message);
+    return { ok: false, error: message };
+  }
 }
 
 async function handleSaveRepo(repo: RepoConfig) {
