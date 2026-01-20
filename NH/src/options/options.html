@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NeetHub Options</title>
+    <style>
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        padding: 16px;
+        max-width: 640px;
+        color: #0f172a;
+        background: #f8fafc;
+      }
+      h1 {
+        margin-top: 0;
+      }
+      label {
+        display: block;
+        font-size: 14px;
+        margin-bottom: 4px;
+      }
+      input {
+        width: 100%;
+        padding: 8px;
+        margin-bottom: 12px;
+        box-sizing: border-box;
+      }
+      button {
+        padding: 10px 12px;
+        border: none;
+        border-radius: 4px;
+        background: #0ea5e9;
+        color: white;
+        cursor: pointer;
+      }
+      .status {
+        margin-top: 8px;
+        font-size: 13px;
+        color: #334155;
+      }
+      .card {
+        background: white;
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+        margin-bottom: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>NeetHub Settings</h1>
+    <div class="card">
+      <label for="repo-owner">GitHub Owner</label>
+      <input id="repo-owner" type="text" placeholder="username" />
+      <label for="repo-name">Repository Name</label>
+      <input id="repo-name" type="text" placeholder="neethub-solutions" />
+      <label for="repo-branch">Default Branch</label>
+      <input id="repo-branch" type="text" placeholder="main" />
+      <button id="save-repo">Save Repository</button>
+      <div class="status" id="status"></div>
+    </div>
+
+    <div class="card">
+      <p>Authorize the extension with GitHub using the device flow. A browser window will open where you can enter the provided code.</p>
+      <button id="auth">Start GitHub Authorization</button>
+      <button id="logout" style="background:#e2e8f0; color:#0f172a; margin-left:8px;">Logout</button>
+    </div>
+
+    <script type="module" src="./options.ts"></script>
+  </body>
+</html>

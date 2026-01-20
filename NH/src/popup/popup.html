@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NeetHub</title>
+    <style>
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        padding: 12px;
+        width: 320px;
+        color: #0f172a;
+        background: #f8fafc;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 8px 0;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        margin-bottom: 4px;
+      }
+      input {
+        width: 100%;
+        padding: 6px;
+        margin-bottom: 10px;
+        box-sizing: border-box;
+      }
+      button {
+        padding: 8px 10px;
+        margin-right: 8px;
+        border: none;
+        border-radius: 4px;
+        background: #0ea5e9;
+        color: white;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #e2e8f0;
+        color: #0f172a;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .status {
+        font-size: 12px;
+        color: #334155;
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>NeetHub</h1>
+    <section>
+      <label for="repo-owner">GitHub Owner</label>
+      <input id="repo-owner" type="text" placeholder="username" />
+      <label for="repo-name">Repository Name</label>
+      <input id="repo-name" type="text" placeholder="neethub-solutions" />
+      <label for="repo-branch">Default Branch</label>
+      <input id="repo-branch" type="text" placeholder="main" />
+      <button id="save-repo">Save Repo</button>
+    </section>
+
+    <section>
+      <div class="row">
+        <label for="upload-enabled">Auto-upload</label>
+        <input id="upload-enabled" type="checkbox" />
+      </div>
+      <div class="row" style="margin-top: 6px;">
+        <button id="auth">Authorize GitHub</button>
+        <button id="logout" class="secondary">Logout</button>
+      </div>
+      <div class="status" id="status"></div>
+    </section>
+
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>

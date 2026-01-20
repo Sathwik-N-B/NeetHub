@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "NeetHub",
+  "version": "0.1.0",
+  "description": "Automatically push NeetCode submissions to GitHub.",
+  "permissions": ["storage", "notifications", "tabs", "scripting"],
+  "host_permissions": ["https://neetcode.io/*", "https://api.github.com/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "NeetHub"
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://neetcode.io/*"],
+      "js": ["content-neetcode.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
