@@ -23,6 +23,8 @@ async function handleMessage(message: unknown): Promise<unknown> {
       return handleSubmission(payload as SubmissionPayload);
     case 'start-auth':
       return handleAuth();
+    case 'resume-auth':
+      return resumeAuth();
     case 'get-settings':
       return getSettings();
     case 'save-repo':
@@ -34,6 +36,23 @@ async function handleMessage(message: unknown): Promise<unknown> {
       return { ok: true };
     default:
       return { ok: false, error: 'unknown-message' };
+  }
+}
+
+// Retry token polling if the user already completed device flow in the browser
+async function resumeAuth() {
+  const settings = await getSettings();
+  const deviceCode = settings.auth?.deviceCode;
+  if (!deviceCode || settings.auth?.accessToken) return { ok: false, error: 'no-pending-auth' };
+  try {
+    const token = await pollForToken(deviceCode, 5);
+    const latest = await getSettings();
+    await saveSettings({ ...latest, auth: { accessToken: token, expiresAt: Date.now() + 3600_000 } });
+    log('GitHub token saved (resume)');
+    return { ok: true };
+  } catch (err) {
+    error('Auth resume failed', err);
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -93,9 +112,23 @@ async function handleSubmission(submission: SubmissionPayload) {
     await ensureRepo(settings.auth.accessToken, settings.repo);
     await commitSubmission(settings.auth.accessToken, settings.repo, submission);
     log('Submission pushed');
+    // Notify user on success
+    void chrome.notifications.create({
+      type: 'basic',
+      iconUrl: NOTIFICATION_ICON,
+      title: 'NeetHub',
+      message: `Committed: ${submission.title}`,
+    });
     return { ok: true };
   } catch (err) {
     warn('Submission failed', err);
+    // Notify user on failure
+    void chrome.notifications.create({
+      type: 'basic',
+      iconUrl: NOTIFICATION_ICON,
+      title: 'NeetHub',
+      message: `Commit failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }

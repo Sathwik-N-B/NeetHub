@@ -15,6 +15,11 @@ async function init() {
   const settings = (await chrome.runtime.sendMessage({ type: 'get-settings' })) as Settings;
   populate(settings);
 
+  // If device flow was completed in the browser but the token isn't saved yet, resume polling.
+  if (!settings.auth?.accessToken && settings.auth?.deviceCode) {
+    void chrome.runtime.sendMessage({ type: 'resume-auth' });
+  }
+
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes.settings?.newValue) return;
     populate(changes.settings.newValue as Settings);
@@ -54,7 +59,16 @@ async function toggleUpload() {
 async function startAuth() {
   const response = await chrome.runtime.sendMessage({ type: 'start-auth' });
   if (response?.ok && response.flow?.verificationUri && response.flow?.userCode) {
-    setStatus(`Visit ${response.flow.verificationUri} and enter ${response.flow.userCode}`);
+    // Open the GitHub device verification page in a new tab like LeetHub does
+    chrome.tabs.create({ url: response.flow.verificationUri });
+
+    // Try to copy the user code to clipboard for convenience
+    try {
+      await navigator.clipboard.writeText(response.flow.userCode);
+      setStatus(`Code copied. Enter ${response.flow.userCode} in the opened GitHub tab.`);
+    } catch {
+      setStatus(`Enter ${response.flow.userCode} at the opened GitHub tab (${response.flow.verificationUri}).`);
+    }
   } else if (response?.error) {
     setStatus(`Auth failed: ${response.error}`);
   } else {
