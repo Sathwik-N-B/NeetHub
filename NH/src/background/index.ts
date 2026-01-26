@@ -2,9 +2,6 @@ import { commitSubmission, ensureRepo, pollForToken, startDeviceFlow, type Submi
 import { clearAuth, getSettings, saveSettings, type RepoConfig } from '../lib/storage';
 import { error, log, warn } from '../lib/logger';
 
-const NOTIFICATION_ICON =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Yt7sJQAAAAASUVORK5CYII=';
-
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   void handleMessage(message).then(sendResponse).catch((err) => {
     error('Unhandled error', err);
@@ -64,12 +61,7 @@ async function handleAuth() {
     const settings = await getSettings();
     await saveSettings({ ...settings, auth: { deviceCode: flow.deviceCode } });
 
-    void chrome.notifications.create({
-      type: 'basic',
-      iconUrl: NOTIFICATION_ICON,
-      title: 'NeetHub',
-      message: `Authorize: ${flow.userCode} at ${flow.verificationUri}`,
-    });
+    // Don't create notification here - popup will handle user interaction
 
     // Poll in background; errors logged.
     void pollForToken(flow.deviceCode, flow.interval)
@@ -115,9 +107,8 @@ async function handleSubmission(submission: SubmissionPayload) {
     // Notify user on success
     void chrome.notifications.create({
       type: 'basic',
-      iconUrl: NOTIFICATION_ICON,
       title: 'NeetHub',
-      message: `Committed: ${submission.title}`,
+      message: `✓ Committed: ${submission.title}`,
     });
     return { ok: true };
   } catch (err) {
@@ -125,9 +116,8 @@ async function handleSubmission(submission: SubmissionPayload) {
     // Notify user on failure
     void chrome.notifications.create({
       type: 'basic',
-      iconUrl: NOTIFICATION_ICON,
       title: 'NeetHub',
-      message: `Commit failed: ${err instanceof Error ? err.message : String(err)}`,
+      message: `✗ Commit failed: ${err instanceof Error ? err.message : String(err)}`,
     });
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

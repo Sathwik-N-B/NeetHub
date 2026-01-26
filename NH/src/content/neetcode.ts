@@ -1,10 +1,38 @@
-import { log, warn } from '../lib/logger';
 import type { SubmissionPayload } from '../lib/github';
 import type { Settings } from '../lib/storage';
 
-// Inject on-page UI panel
-injectPanel();
-setupPanelListeners();
+// Inline logger functions to avoid import issues in content script
+function log(...args: unknown[]) {
+  console.log('[NeetHub]', ...args);
+}
+
+function warn(...args: unknown[]) {
+  console.warn('[NeetHub]', ...args);
+}
+
+
+// Ensure DOM is ready before injecting
+function initializeExtension() {
+  try {
+    // Inject on-page UI panel
+    injectPanel();
+    setupPanelListeners();
+
+    // Auto-capture: hook fetch/XHR to detect submission responses
+    patchFetch();
+    patchXhr();
+
+    log('NeetHub initialized');
+  } catch (err) {
+    warn('NeetHub initialization failed', err);
+  }
+}
+
+if (document.body) {
+  initializeExtension();
+} else {
+  document.addEventListener('DOMContentLoaded', initializeExtension);
+}
 
 // Passive listener for manual injections from page context
 window.addEventListener('message', (event) => {
@@ -20,10 +48,6 @@ window.addEventListener('message', (event) => {
 
   void pushSubmission(payload, 'postMessage');
 });
-
-// Auto-capture: hook fetch/XHR to detect submission responses
-patchFetch();
-patchXhr();
 
 let recentKeys = new Set<string>();
 const RECENT_TTL_MS = 10 * 60 * 1000; // dedupe window
@@ -447,9 +471,9 @@ function patchXhr() {
     private _url = '';
     private _reqData: unknown = undefined;
 
-    open(method: string, url: string | URL, ...rest: unknown[]) {
+    open(method: string, url: string | URL, async?: boolean, username?: string) {
       this._url = typeof url === 'string' ? url : url.toString();
-      return super.open(method, url as any, ...(rest as any[]));
+      return super.open(method, url as any, async, username);
     }
 
     send(body?: Document | BodyInit | null) {
