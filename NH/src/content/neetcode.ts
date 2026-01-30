@@ -92,167 +92,189 @@ let lastFailedSubmission: SubmissionPayload | null = null;
 let toolbarButtonState: 'idle' | 'pushing' | 'success' | 'error' = 'idle';
 
 function injectToolbarButton() {
-  // Wait a bit for the page to fully render
-  setTimeout(() => {
-    tryInjectToolbarButton();
-  }, 1500);
+  // Wait a bit for the page to fully render, then keep trying
+  const tryInject = () => {
+    if (!document.getElementById('neethub-toolbar-btn')) {
+      attemptToolbarInjection();
+    }
+  };
+  
+  // Try immediately, then after delays
+  tryInject();
+  setTimeout(tryInject, 1000);
+  setTimeout(tryInject, 2000);
+  setTimeout(tryInject, 4000);
   
   // Also try on any DOM changes (for SPA navigation)
   const observer = new MutationObserver(() => {
-    tryInjectToolbarButton();
+    if (!document.getElementById('neethub-toolbar-btn')) {
+      attemptToolbarInjection();
+    }
   });
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
-function tryInjectToolbarButton() {
-  // Check if button already injected
-  if (document.getElementById('neethub-toolbar-container')) {
-    return;
-  }
+function attemptToolbarInjection() {
+  // Look for NeetCode's editor toolbar - it usually has language selector, buttons, etc.
+  // Common patterns: flex container near the code editor with buttons
+  const selectors = [
+    // Look for the row with "Java", "Auto", etc. - typically has flex layout
+    '[class*="flex"][class*="items-center"]:has([class*="select"])',
+    '[class*="toolbar"]',
+    '[class*="editor-header"]',
+    '[class*="header"]:has(button)',
+    // Fallback: any flex container near code that has buttons
+    '.flex.items-center.gap-2',
+    '.flex.items-center.space-x-2',
+  ];
 
-  // Try to find the editor area - look for common patterns in NeetCode
-  const editorArea = document.querySelector('[class*="editor"]') ||
-                     document.querySelector('[class*="code-area"]') ||
-                     document.querySelector('[class*="monaco"]');
+  let toolbar: Element | null = null;
   
-  if (!editorArea) {
+  for (const sel of selectors) {
+    try {
+      const candidates = document.querySelectorAll(sel);
+      for (const el of candidates) {
+        // Check if it looks like an editor toolbar (has buttons, near code area)
+        if (el.querySelector('button') && el.closest('[class*="editor"], [class*="code"], main')) {
+          toolbar = el;
+          break;
+        }
+      }
+      if (toolbar) break;
+    } catch {
+      // :has selector might not be supported everywhere
+    }
+  }
+
+  // Fallback: find any element that contains language text like "Java" or "Python"
+  if (!toolbar) {
+    const allElements = document.querySelectorAll('div, span');
+    for (const el of allElements) {
+      const text = el.textContent?.trim() || '';
+      if (/^(Java|Python|C\+\+|JavaScript|TypeScript)$/i.test(text)) {
+        // Found language selector, look for parent toolbar
+        const parent = el.closest('[class*="flex"]');
+        if (parent && parent.querySelector('button')) {
+          toolbar = parent;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!toolbar) {
+    return; // Will retry via observer
+  }
+
+  // Check if already injected
+  if (document.getElementById('neethub-toolbar-btn')) {
     return;
   }
 
-  // Create a container that floats in the top-right of the editor area
+  // Create the inline button that matches LeetCode's style
   const container = document.createElement('div');
-  container.id = 'neethub-toolbar-container';
+  container.id = 'neethub-toolbar-btn';
   container.innerHTML = `
     <style>
-      #neethub-toolbar-container {
-        position: fixed;
-        top: 70px;
-        right: 320px;
-        z-index: 9998;
-        display: flex;
+      #neethub-toolbar-btn {
+        display: inline-flex;
         align-items: center;
-        gap: 8px;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        gap: 6px;
+        margin-left: 12px;
+        padding: 4px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        font-family: inherit;
+        transition: all 0.15s ease;
+        user-select: none;
       }
-      #neethub-status-indicator {
-        width: 24px;
-        height: 24px;
+      #neethub-toolbar-btn:hover {
+        background: rgba(255,255,255,0.1);
+      }
+      #neethub-toolbar-btn .nh-icon {
+        width: 18px;
+        height: 18px;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 14px;
+        font-size: 12px;
         font-weight: bold;
         color: white;
-        transition: all 0.3s ease;
-        cursor: default;
+        flex-shrink: 0;
       }
-      #neethub-status-indicator.idle {
+      #neethub-toolbar-btn .nh-icon.idle {
         background: #6b7280;
       }
-      #neethub-status-indicator.pushing {
+      #neethub-toolbar-btn .nh-icon.pushing {
         background: #f59e0b;
-        animation: pulse 1s infinite;
+        animation: nh-pulse 1s infinite;
       }
-      #neethub-status-indicator.success {
-        background: #16a34a;
+      #neethub-toolbar-btn .nh-icon.success {
+        background: #22c55e;
       }
-      #neethub-status-indicator.error {
-        background: #dc2626;
-        cursor: pointer;
+      #neethub-toolbar-btn .nh-icon.error {
+        background: #ef4444;
       }
-      @keyframes pulse {
+      @keyframes nh-pulse {
         0%, 100% { opacity: 1; }
-        50% { opacity: 0.6; }
+        50% { opacity: 0.5; }
       }
-      #neethub-push-btn {
-        padding: 6px 14px;
-        border-radius: 6px;
-        border: none;
-        background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
-        color: white;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        transition: all 0.2s ease;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      }
-      #neethub-push-btn:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-      }
-      #neethub-push-btn:disabled {
-        opacity: 0.7;
-        cursor: not-allowed;
-        transform: none;
-      }
-      #neethub-push-btn.retry {
-        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      #neethub-toolbar-btn .nh-text {
+        color: #e5e7eb;
       }
     </style>
-    <div id="neethub-status-indicator" class="idle" title="NeetHub: Ready">—</div>
-    <button id="neethub-push-btn" title="Push code to GitHub">
-      <span id="neethub-btn-icon">⬆</span>
-      <span id="neethub-btn-text">Push</span>
-    </button>
+    <span class="nh-icon idle" id="nh-tb-icon">✓</span>
+    <span class="nh-text" id="nh-tb-text">Push</span>
   `;
 
-  document.body.appendChild(container);
+  // Insert into toolbar
+  toolbar.appendChild(container);
 
-  const statusIndicator = document.getElementById('neethub-status-indicator')!;
-  const pushBtn = document.getElementById('neethub-push-btn')!;
-  const btnIcon = document.getElementById('neethub-btn-icon')!;
-  const btnText = document.getElementById('neethub-btn-text')!;
+  const iconEl = document.getElementById('nh-tb-icon')!;
+  const textEl = document.getElementById('nh-tb-text')!;
 
-  // Status indicator click - retry on error
-  statusIndicator.addEventListener('click', () => {
+  container.addEventListener('click', async () => {
+    if (toolbarButtonState === 'pushing') return;
+
+    // If error state, retry last failed submission
     if (toolbarButtonState === 'error' && lastFailedSubmission) {
-      triggerPush(pushBtn, btnIcon, btnText, statusIndicator, lastFailedSubmission);
+      await doToolbarPush(iconEl, textEl, lastFailedSubmission);
+      return;
     }
-  });
 
-  // Push button click
-  pushBtn.addEventListener('click', async () => {
+    // Otherwise, push current code
     const code = extractPageCode();
     if (!code) {
-      alert('No code found on page. Make sure you are on a problem page with code.');
+      textEl.textContent = 'No code';
+      setTimeout(() => { textEl.textContent = 'Push'; }, 2000);
       return;
     }
 
     const submission: SubmissionPayload = {
       title: extractPageTitle() || 'Unknown Problem',
       slug: (extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
-      language: extractPageLanguage() || 'javascript',
+      language: extractPageLanguage() || 'unknown',
       code,
       runtime: 'n/a',
       memory: 'n/a',
       timestamp: Date.now(),
     };
 
-    triggerPush(pushBtn, btnIcon, btnText, statusIndicator, submission);
+    await doToolbarPush(iconEl, textEl, submission);
   });
 
-  log('Toolbar button injected');
+  log('Toolbar button injected (inline style)');
 }
 
-async function triggerPush(
-  pushBtn: HTMLElement,
-  btnIcon: HTMLElement,
-  btnText: HTMLElement,
-  statusIndicator: HTMLElement,
-  submission: SubmissionPayload
-) {
+async function doToolbarPush(iconEl: HTMLElement, textEl: HTMLElement, submission: SubmissionPayload) {
   // Update UI to pushing state
   toolbarButtonState = 'pushing';
-  (pushBtn as HTMLButtonElement).disabled = true;
-  btnIcon.textContent = '⏳';
-  btnText.textContent = 'Pushing...';
-  statusIndicator.className = 'pushing';
-  statusIndicator.textContent = '⋯';
-  statusIndicator.title = 'NeetHub: Pushing to GitHub...';
+  iconEl.className = 'nh-icon pushing';
+  iconEl.textContent = '⋯';
+  textEl.textContent = 'Pushing...';
 
   try {
     const response = await chrome.runtime.sendMessage({ type: 'submission', payload: submission });
@@ -261,97 +283,69 @@ async function triggerPush(
       // Success
       toolbarButtonState = 'success';
       lastFailedSubmission = null;
-      btnIcon.textContent = '✓';
-      btnText.textContent = 'Pushed!';
-      statusIndicator.className = 'success';
-      statusIndicator.textContent = '✓';
-      statusIndicator.title = `NeetHub: Successfully pushed ${submission.title}`;
-      pushBtn.classList.remove('retry');
+      iconEl.className = 'nh-icon success';
+      iconEl.textContent = '✓';
+      textEl.textContent = 'Push';
       
       logPanel(`✓ Pushed: ${submission.title}`);
       log('Submission pushed via toolbar');
 
-      // Reset to idle after 5 seconds
+      // Keep green for a bit, then reset
       setTimeout(() => {
         if (toolbarButtonState === 'success') {
-          resetToolbarButton(pushBtn, btnIcon, btnText, statusIndicator);
+          toolbarButtonState = 'idle';
+          iconEl.className = 'nh-icon idle';
         }
       }, 5000);
     } else {
-      // Error
       throw new Error(response?.error || 'Unknown error');
     }
   } catch (err) {
     toolbarButtonState = 'error';
     lastFailedSubmission = submission;
-    btnIcon.textContent = '↻';
-    btnText.textContent = 'Retry';
-    pushBtn.classList.add('retry');
-    statusIndicator.className = 'error';
-    statusIndicator.textContent = '✗';
-    statusIndicator.title = `NeetHub: Failed - Click to retry\n${err instanceof Error ? err.message : String(err)}`;
+    iconEl.className = 'nh-icon error';
+    iconEl.textContent = '✗';
+    textEl.textContent = 'Retry';
     
     logPanel(`✗ Push failed: ${err instanceof Error ? err.message : String(err)}`);
     warn('Toolbar push failed', err);
   }
-
-  (pushBtn as HTMLButtonElement).disabled = false;
 }
 
-function resetToolbarButton(
-  pushBtn: HTMLElement,
-  btnIcon: HTMLElement,
-  btnText: HTMLElement,
-  statusIndicator: HTMLElement
-) {
-  toolbarButtonState = 'idle';
-  btnIcon.textContent = '⬆';
-  btnText.textContent = 'Push';
-  pushBtn.classList.remove('retry');
-  statusIndicator.className = 'idle';
-  statusIndicator.textContent = '—';
-  statusIndicator.title = 'NeetHub: Ready';
-}
-
-// Update status indicator from other push sources (panel, auto-capture)
+// Update toolbar status from other push sources (auto-capture, panel)
 function updateToolbarStatus(state: 'pushing' | 'success' | 'error', message?: string) {
-  const statusIndicator = document.getElementById('neethub-status-indicator');
-  const pushBtn = document.getElementById('neethub-push-btn');
-  const btnIcon = document.getElementById('neethub-btn-icon');
-  const btnText = document.getElementById('neethub-btn-text');
+  const iconEl = document.getElementById('nh-tb-icon');
+  const textEl = document.getElementById('nh-tb-text');
   
-  if (!statusIndicator || !pushBtn || !btnIcon || !btnText) return;
+  if (!iconEl || !textEl) return;
 
   toolbarButtonState = state;
   
   if (state === 'pushing') {
-    statusIndicator.className = 'pushing';
-    statusIndicator.textContent = '⋯';
-    statusIndicator.title = 'NeetHub: Pushing...';
+    iconEl.className = 'nh-icon pushing';
+    iconEl.textContent = '⋯';
+    textEl.textContent = 'Pushing...';
   } else if (state === 'success') {
-    statusIndicator.className = 'success';
-    statusIndicator.textContent = '✓';
-    statusIndicator.title = `NeetHub: ${message || 'Success'}`;
-    btnIcon.textContent = '✓';
-    btnText.textContent = 'Pushed!';
+    iconEl.className = 'nh-icon success';
+    iconEl.textContent = '✓';
+    textEl.textContent = 'Push';
     
     setTimeout(() => {
       if (toolbarButtonState === 'success') {
-        resetToolbarButton(pushBtn, btnIcon, btnText, statusIndicator);
+        toolbarButtonState = 'idle';
+        iconEl.className = 'nh-icon idle';
       }
     }, 5000);
   } else if (state === 'error') {
-    statusIndicator.className = 'error';
-    statusIndicator.textContent = '✗';
-    statusIndicator.title = `NeetHub: ${message || 'Error'} - Click to retry`;
-    btnIcon.textContent = '↻';
-    btnText.textContent = 'Retry';
-    pushBtn.classList.add('retry');
+    iconEl.className = 'nh-icon error';
+    iconEl.textContent = '✗';
+    textEl.textContent = 'Retry';
   }
 }
 
 
 function injectPanel() {
+
   const panel = document.createElement('div');
   panel.id = 'neethub-panel';
   panel.innerHTML = `
