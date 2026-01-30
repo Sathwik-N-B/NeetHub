@@ -2,6 +2,10 @@ import { commitSubmission, ensureRepo, pollForToken, startDeviceFlow, type Submi
 import { clearAuth, getSettings, saveSettings, type RepoConfig } from '../lib/storage';
 import { error, log, warn } from '../lib/logger';
 
+// Embedded 1x1 icon to satisfy Chrome notification requirements
+const NOTIFICATION_ICON =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AApMBg9uMCf0AAAAASUVORK5CYII=';
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   void handleMessage(message).then(sendResponse).catch((err) => {
     error('Unhandled error', err);
@@ -107,6 +111,7 @@ async function handleSubmission(submission: SubmissionPayload) {
     // Notify user on success
     void chrome.notifications.create({
       type: 'basic',
+      iconUrl: NOTIFICATION_ICON,
       title: 'NeetHub',
       message: `✓ Committed: ${submission.title}`,
     });
@@ -116,6 +121,7 @@ async function handleSubmission(submission: SubmissionPayload) {
     // Notify user on failure
     void chrome.notifications.create({
       type: 'basic',
+      iconUrl: NOTIFICATION_ICON,
       title: 'NeetHub',
       message: `✗ Commit failed: ${err instanceof Error ? err.message : String(err)}`,
     });

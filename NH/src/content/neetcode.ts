@@ -18,6 +18,9 @@ function initializeExtension() {
     injectPanel();
     setupPanelListeners();
 
+    // Inject toolbar button
+    injectToolbarButton();
+
     // Auto-capture: hook fetch/XHR to detect submission responses
     patchFetch();
     patchXhr();
@@ -84,6 +87,270 @@ function debugCapture(url: string, requestBody: unknown, responseData: unknown) 
   } catch {}
 }
 
+// Track last submission for retry
+let lastFailedSubmission: SubmissionPayload | null = null;
+let toolbarButtonState: 'idle' | 'pushing' | 'success' | 'error' = 'idle';
+
+function injectToolbarButton() {
+  // Wait a bit for the page to fully render
+  setTimeout(() => {
+    tryInjectToolbarButton();
+  }, 1500);
+  
+  // Also try on any DOM changes (for SPA navigation)
+  const observer = new MutationObserver(() => {
+    tryInjectToolbarButton();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+function tryInjectToolbarButton() {
+  // Check if button already injected
+  if (document.getElementById('neethub-toolbar-container')) {
+    return;
+  }
+
+  // Try to find the editor area - look for common patterns in NeetCode
+  const editorArea = document.querySelector('[class*="editor"]') ||
+                     document.querySelector('[class*="code-area"]') ||
+                     document.querySelector('[class*="monaco"]');
+  
+  if (!editorArea) {
+    return;
+  }
+
+  // Create a container that floats in the top-right of the editor area
+  const container = document.createElement('div');
+  container.id = 'neethub-toolbar-container';
+  container.innerHTML = `
+    <style>
+      #neethub-toolbar-container {
+        position: fixed;
+        top: 70px;
+        right: 320px;
+        z-index: 9998;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+      #neethub-status-indicator {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: bold;
+        color: white;
+        transition: all 0.3s ease;
+        cursor: default;
+      }
+      #neethub-status-indicator.idle {
+        background: #6b7280;
+      }
+      #neethub-status-indicator.pushing {
+        background: #f59e0b;
+        animation: pulse 1s infinite;
+      }
+      #neethub-status-indicator.success {
+        background: #16a34a;
+      }
+      #neethub-status-indicator.error {
+        background: #dc2626;
+        cursor: pointer;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+      }
+      #neethub-push-btn {
+        padding: 6px 14px;
+        border-radius: 6px;
+        border: none;
+        background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+        color: white;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      #neethub-push-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+      }
+      #neethub-push-btn:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+        transform: none;
+      }
+      #neethub-push-btn.retry {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      }
+    </style>
+    <div id="neethub-status-indicator" class="idle" title="NeetHub: Ready">—</div>
+    <button id="neethub-push-btn" title="Push code to GitHub">
+      <span id="neethub-btn-icon">⬆</span>
+      <span id="neethub-btn-text">Push</span>
+    </button>
+  `;
+
+  document.body.appendChild(container);
+
+  const statusIndicator = document.getElementById('neethub-status-indicator')!;
+  const pushBtn = document.getElementById('neethub-push-btn')!;
+  const btnIcon = document.getElementById('neethub-btn-icon')!;
+  const btnText = document.getElementById('neethub-btn-text')!;
+
+  // Status indicator click - retry on error
+  statusIndicator.addEventListener('click', () => {
+    if (toolbarButtonState === 'error' && lastFailedSubmission) {
+      triggerPush(pushBtn, btnIcon, btnText, statusIndicator, lastFailedSubmission);
+    }
+  });
+
+  // Push button click
+  pushBtn.addEventListener('click', async () => {
+    const code = extractPageCode();
+    if (!code) {
+      alert('No code found on page. Make sure you are on a problem page with code.');
+      return;
+    }
+
+    const submission: SubmissionPayload = {
+      title: extractPageTitle() || 'Unknown Problem',
+      slug: (extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
+      language: extractPageLanguage() || 'javascript',
+      code,
+      runtime: 'n/a',
+      memory: 'n/a',
+      timestamp: Date.now(),
+    };
+
+    triggerPush(pushBtn, btnIcon, btnText, statusIndicator, submission);
+  });
+
+  log('Toolbar button injected');
+}
+
+async function triggerPush(
+  pushBtn: HTMLElement,
+  btnIcon: HTMLElement,
+  btnText: HTMLElement,
+  statusIndicator: HTMLElement,
+  submission: SubmissionPayload
+) {
+  // Update UI to pushing state
+  toolbarButtonState = 'pushing';
+  (pushBtn as HTMLButtonElement).disabled = true;
+  btnIcon.textContent = '⏳';
+  btnText.textContent = 'Pushing...';
+  statusIndicator.className = 'pushing';
+  statusIndicator.textContent = '⋯';
+  statusIndicator.title = 'NeetHub: Pushing to GitHub...';
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'submission', payload: submission });
+    
+    if (response?.ok) {
+      // Success
+      toolbarButtonState = 'success';
+      lastFailedSubmission = null;
+      btnIcon.textContent = '✓';
+      btnText.textContent = 'Pushed!';
+      statusIndicator.className = 'success';
+      statusIndicator.textContent = '✓';
+      statusIndicator.title = `NeetHub: Successfully pushed ${submission.title}`;
+      pushBtn.classList.remove('retry');
+      
+      logPanel(`✓ Pushed: ${submission.title}`);
+      log('Submission pushed via toolbar');
+
+      // Reset to idle after 5 seconds
+      setTimeout(() => {
+        if (toolbarButtonState === 'success') {
+          resetToolbarButton(pushBtn, btnIcon, btnText, statusIndicator);
+        }
+      }, 5000);
+    } else {
+      // Error
+      throw new Error(response?.error || 'Unknown error');
+    }
+  } catch (err) {
+    toolbarButtonState = 'error';
+    lastFailedSubmission = submission;
+    btnIcon.textContent = '↻';
+    btnText.textContent = 'Retry';
+    pushBtn.classList.add('retry');
+    statusIndicator.className = 'error';
+    statusIndicator.textContent = '✗';
+    statusIndicator.title = `NeetHub: Failed - Click to retry\n${err instanceof Error ? err.message : String(err)}`;
+    
+    logPanel(`✗ Push failed: ${err instanceof Error ? err.message : String(err)}`);
+    warn('Toolbar push failed', err);
+  }
+
+  (pushBtn as HTMLButtonElement).disabled = false;
+}
+
+function resetToolbarButton(
+  pushBtn: HTMLElement,
+  btnIcon: HTMLElement,
+  btnText: HTMLElement,
+  statusIndicator: HTMLElement
+) {
+  toolbarButtonState = 'idle';
+  btnIcon.textContent = '⬆';
+  btnText.textContent = 'Push';
+  pushBtn.classList.remove('retry');
+  statusIndicator.className = 'idle';
+  statusIndicator.textContent = '—';
+  statusIndicator.title = 'NeetHub: Ready';
+}
+
+// Update status indicator from other push sources (panel, auto-capture)
+function updateToolbarStatus(state: 'pushing' | 'success' | 'error', message?: string) {
+  const statusIndicator = document.getElementById('neethub-status-indicator');
+  const pushBtn = document.getElementById('neethub-push-btn');
+  const btnIcon = document.getElementById('neethub-btn-icon');
+  const btnText = document.getElementById('neethub-btn-text');
+  
+  if (!statusIndicator || !pushBtn || !btnIcon || !btnText) return;
+
+  toolbarButtonState = state;
+  
+  if (state === 'pushing') {
+    statusIndicator.className = 'pushing';
+    statusIndicator.textContent = '⋯';
+    statusIndicator.title = 'NeetHub: Pushing...';
+  } else if (state === 'success') {
+    statusIndicator.className = 'success';
+    statusIndicator.textContent = '✓';
+    statusIndicator.title = `NeetHub: ${message || 'Success'}`;
+    btnIcon.textContent = '✓';
+    btnText.textContent = 'Pushed!';
+    
+    setTimeout(() => {
+      if (toolbarButtonState === 'success') {
+        resetToolbarButton(pushBtn, btnIcon, btnText, statusIndicator);
+      }
+    }, 5000);
+  } else if (state === 'error') {
+    statusIndicator.className = 'error';
+    statusIndicator.textContent = '✗';
+    statusIndicator.title = `NeetHub: ${message || 'Error'} - Click to retry`;
+    btnIcon.textContent = '↻';
+    btnText.textContent = 'Retry';
+    pushBtn.classList.add('retry');
+  }
+}
+
+
 function injectPanel() {
   const panel = document.createElement('div');
   panel.id = 'neethub-panel';
@@ -99,6 +366,7 @@ function injectPanel() {
         border-left: 1px solid #e5e7eb;
         box-shadow: -2px 0 8px rgba(0,0,0,0.1);
         border-radius: 8px 0 0 8px;
+
         z-index: 9999;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         overflow-y: auto;
@@ -543,23 +811,39 @@ function handleCandidate(data: unknown, source: string, requestData?: unknown) {
 }
 
 async function pushSubmission(payload: SubmissionPayload, source: string) {
+  // Skip toolbar status update if this came from the toolbar itself (it handles its own UI)
+  const updateToolbar = source !== 'toolbar';
+  
   try {
     showBadge('pending');
+    if (updateToolbar) updateToolbarStatus('pushing');
+    
     const response = await chrome.runtime.sendMessage({ type: 'submission', payload });
     if (response?.ok) {
       markRecent(payload);
       logPanel(`✓ Pushed: ${payload.title}`);
       log('Submission sent to background from', source);
       showBadge('success');
+      if (updateToolbar) updateToolbarStatus('success', `Pushed: ${payload.title}`);
     } else {
-      logPanel(`✗ Push failed: ${response?.error ?? 'unknown'}`);
+      const errorMsg = response?.error ?? 'unknown';
+      logPanel(`✗ Push failed: ${errorMsg}`);
       warn('Submission failed', response?.error);
       showBadge('error');
+      if (updateToolbar) {
+        lastFailedSubmission = payload;
+        updateToolbarStatus('error', `Failed: ${errorMsg}`);
+      }
     }
   } catch (err) {
-    logPanel(`✗ Error: ${err instanceof Error ? err.message : String(err)}`);
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    logPanel(`✗ Error: ${errorMsg}`);
     warn('Failed to send submission', err);
     showBadge('error');
+    if (updateToolbar) {
+      lastFailedSubmission = payload;
+      updateToolbarStatus('error', `Error: ${errorMsg}`);
+    }
   }
 }
 
