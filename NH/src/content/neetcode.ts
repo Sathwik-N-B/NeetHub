@@ -14,11 +14,7 @@ function warn(...args: unknown[]) {
 // Ensure DOM is ready before injecting
 function initializeExtension() {
   try {
-    // Inject on-page UI panel
-    injectPanel();
-    setupPanelListeners();
-
-    // Inject toolbar button
+    // Inject toolbar button (inline in editor area)
     injectToolbarButton();
 
     // Auto-capture: hook fetch/XHR to detect submission responses
@@ -78,13 +74,6 @@ function debugCapture(url: string, requestBody: unknown, responseData: unknown) 
     console.info('Response:', responseData);
     console.groupEnd();
   } catch {}
-  try {
-    logPanel(
-      `Captured API: ${url}\nRequest: ${JSON.stringify(requestBody)}\nResponse: ${JSON.stringify(
-        responseData
-      )}`
-    );
-  } catch {}
 }
 
 // Track last submission for retry
@@ -115,60 +104,80 @@ function injectToolbarButton() {
 }
 
 function attemptToolbarInjection() {
-  // Look for NeetCode's editor toolbar - it usually has language selector, buttons, etc.
-  // Common patterns: flex container near the code editor with buttons
-  const selectors = [
-    // Look for the row with "Java", "Auto", etc. - typically has flex layout
-    '[class*="flex"][class*="items-center"]:has([class*="select"])',
-    '[class*="toolbar"]',
-    '[class*="editor-header"]',
-    '[class*="header"]:has(button)',
-    // Fallback: any flex container near code that has buttons
-    '.flex.items-center.gap-2',
-    '.flex.items-center.space-x-2',
-  ];
+  // Check if already injected
+  if (document.getElementById('neethub-toolbar-btn')) {
+    return;
+  }
 
+  // Find the toolbar row that contains "Java" dropdown and "Auto" text
+  // This is the top bar of the code editor area
   let toolbar: Element | null = null;
+  let insertBeforeEl: Element | null = null;
+
+  // Strategy 1: Find the row containing "Auto" checkbox/label - that's our target row
+  const allText = document.evaluate(
+    "//*[contains(text(), 'Auto')]",
+    document,
+    null,
+    XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+    null
+  );
   
-  for (const sel of selectors) {
-    try {
-      const candidates = document.querySelectorAll(sel);
-      for (const el of candidates) {
-        // Check if it looks like an editor toolbar (has buttons, near code area)
-        if (el.querySelector('button') && el.closest('[class*="editor"], [class*="code"], main')) {
-          toolbar = el;
-          break;
+  for (let i = 0; i < allText.snapshotLength; i++) {
+    const el = allText.snapshotItem(i) as Element;
+    if (el && el.textContent?.trim() === 'Auto') {
+      // Found "Auto" label, get the parent row
+      const row = el.closest('div[class*="flex"]');
+      if (row) {
+        toolbar = row;
+        // Find the icons group on the right to insert before it
+        const buttons = row.querySelectorAll('button, [role="button"]');
+        if (buttons.length > 0) {
+          // Find the rightmost group of buttons/icons
+          for (const btn of buttons) {
+            const parent = btn.parentElement;
+            if (parent && parent !== row && parent.children.length > 1) {
+              insertBeforeEl = parent;
+              break;
+            }
+          }
         }
+        break;
       }
-      if (toolbar) break;
-    } catch {
-      // :has selector might not be supported everywhere
     }
   }
 
-  // Fallback: find any element that contains language text like "Java" or "Python"
+  // Strategy 2: Find by looking for language selector dropdown
   if (!toolbar) {
-    const allElements = document.querySelectorAll('div, span');
-    for (const el of allElements) {
-      const text = el.textContent?.trim() || '';
-      if (/^(Java|Python|C\+\+|JavaScript|TypeScript)$/i.test(text)) {
-        // Found language selector, look for parent toolbar
-        const parent = el.closest('[class*="flex"]');
-        if (parent && parent.querySelector('button')) {
-          toolbar = parent;
+    const selects = document.querySelectorAll('select, [role="combobox"], [role="listbox"]');
+    for (const sel of selects) {
+      const text = sel.textContent || '';
+      if (/Java|Python|C\+\+|JavaScript|Go|Ruby/i.test(text)) {
+        const row = sel.closest('div[class*="flex"]');
+        if (row) {
+          toolbar = row;
           break;
         }
+      }
+    }
+  }
+
+  // Strategy 3: Look for the specific toolbar structure
+  if (!toolbar) {
+    // NeetCode typically has a flex row with items-center
+    const candidates = document.querySelectorAll('.flex.items-center');
+    for (const el of candidates) {
+      const hasLanguage = el.textContent?.match(/Java|Python|C\+\+/);
+      const hasAuto = el.textContent?.includes('Auto');
+      if (hasLanguage && hasAuto) {
+        toolbar = el;
+        break;
       }
     }
   }
 
   if (!toolbar) {
     return; // Will retry via observer
-  }
-
-  // Check if already injected
-  if (document.getElementById('neethub-toolbar-btn')) {
-    return;
   }
 
   // Create the inline button that matches LeetCode's style
@@ -180,8 +189,9 @@ function attemptToolbarInjection() {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        margin-left: 12px;
-        padding: 4px 10px;
+        margin-left: auto;
+        margin-right: 8px;
+        padding: 4px 12px;
         border-radius: 4px;
         cursor: pointer;
         font-size: 13px;
@@ -189,9 +199,10 @@ function attemptToolbarInjection() {
         font-family: inherit;
         transition: all 0.15s ease;
         user-select: none;
+        background: rgba(255,255,255,0.05);
       }
       #neethub-toolbar-btn:hover {
-        background: rgba(255,255,255,0.1);
+        background: rgba(255,255,255,0.15);
       }
       #neethub-toolbar-btn .nh-icon {
         width: 18px;
@@ -230,8 +241,30 @@ function attemptToolbarInjection() {
     <span class="nh-text" id="nh-tb-text">Push</span>
   `;
 
-  // Insert into toolbar
-  toolbar.appendChild(container);
+  // Insert into toolbar - try to insert before the right-side icons group
+  if (insertBeforeEl) {
+    toolbar.insertBefore(container, insertBeforeEl);
+  } else {
+    // Find the group of icon buttons on the right (usually has multiple svg/button children)
+    const children = Array.from(toolbar.children);
+    let insertPoint: Element | null = null;
+    
+    for (let i = children.length - 1; i >= 0; i--) {
+      const child = children[i];
+      // Look for the icons group - usually buttons or has multiple button children
+      if (child.querySelector('button') || child.querySelector('svg') || child.tagName === 'BUTTON') {
+        insertPoint = child;
+      } else {
+        break; // Stop when we hit non-icon content
+      }
+    }
+    
+    if (insertPoint) {
+      toolbar.insertBefore(container, insertPoint);
+    } else {
+      toolbar.appendChild(container);
+    }
+  }
 
   const iconEl = document.getElementById('nh-tb-icon')!;
   const textEl = document.getElementById('nh-tb-text')!;
@@ -287,8 +320,7 @@ async function doToolbarPush(iconEl: HTMLElement, textEl: HTMLElement, submissio
       iconEl.textContent = '✓';
       textEl.textContent = 'Push';
       
-      logPanel(`✓ Pushed: ${submission.title}`);
-      log('Submission pushed via toolbar');
+      log('Submission pushed via toolbar:', submission.title);
 
       // Keep green for a bit, then reset
       setTimeout(() => {
@@ -307,8 +339,7 @@ async function doToolbarPush(iconEl: HTMLElement, textEl: HTMLElement, submissio
     iconEl.textContent = '✗';
     textEl.textContent = 'Retry';
     
-    logPanel(`✗ Push failed: ${err instanceof Error ? err.message : String(err)}`);
-    warn('Toolbar push failed', err);
+    warn('Toolbar push failed:', err);
   }
 }
 
@@ -344,245 +375,7 @@ function updateToolbarStatus(state: 'pushing' | 'success' | 'error', message?: s
 }
 
 
-function injectPanel() {
-
-  const panel = document.createElement('div');
-  panel.id = 'neethub-panel';
-  panel.innerHTML = `
-    <style>
-      #neethub-panel {
-        position: fixed;
-        top: 60px;
-        right: 0;
-        width: 300px;
-        max-height: 500px;
-        background: #fff;
-        border-left: 1px solid #e5e7eb;
-        box-shadow: -2px 0 8px rgba(0,0,0,0.1);
-        border-radius: 8px 0 0 8px;
-
-        z-index: 9999;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        overflow-y: auto;
-      }
-      #neethub-panel * {
-        box-sizing: border-box;
-      }
-      .nh-header {
-        padding: 12px;
-        border-bottom: 1px solid #e5e7eb;
-        font-weight: 600;
-        font-size: 14px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-      }
-      .nh-logo {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .nh-close {
-        background: none;
-        border: none;
-        cursor: pointer;
-        font-size: 18px;
-        color: #6b7280;
-      }
-      .nh-body {
-        padding: 12px;
-      }
-      .nh-status {
-        padding: 8px;
-        margin-bottom: 10px;
-        border-radius: 6px;
-        font-size: 12px;
-        text-align: center;
-      }
-      .nh-status.connected {
-        background: #ecfdf5;
-        color: #047857;
-        border: 1px solid #d1fae5;
-      }
-      .nh-status.disconnected {
-        background: #fef2f2;
-        color: #dc2626;
-        border: 1px solid #fee2e2;
-      }
-      .nh-section {
-        margin-bottom: 12px;
-      }
-      .nh-label {
-        font-size: 11px;
-        font-weight: 600;
-        color: #6b7280;
-        text-transform: uppercase;
-        margin-bottom: 4px;
-      }
-      .nh-value {
-        font-size: 13px;
-        color: #1f2937;
-        word-break: break-all;
-        padding: 4px;
-        background: #f9fafb;
-        border-radius: 4px;
-      }
-      .nh-button {
-        width: 100%;
-        padding: 8px;
-        margin-top: 8px;
-        border: none;
-        border-radius: 4px;
-        font-size: 12px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: opacity 0.2s;
-      }
-      .nh-button.primary {
-        background: #0ea5e9;
-        color: white;
-      }
-      .nh-button.primary:hover {
-        opacity: 0.9;
-      }
-      .nh-button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .nh-log {
-        font-size: 11px;
-        color: #6b7280;
-        max-height: 100px;
-        overflow-y: auto;
-        padding: 6px;
-        background: #f3f4f6;
-        border-radius: 4px;
-        margin-top: 8px;
-      }
-      .nh-log-entry {
-        margin: 2px 0;
-        word-break: break-word;
-      }
-    </style>
-    <div class="nh-header">
-      <div class="nh-logo">
-        <span>🎯 NeetHub</span>
-      </div>
-      <button class="nh-close" id="nh-close">✕</button>
-    </div>
-    <div class="nh-body">
-      <div class="nh-status disconnected" id="nh-status">Not Authorized</div>
-      
-      <div class="nh-section">
-        <div class="nh-label">Repository</div>
-        <div class="nh-value" id="nh-repo">Not configured</div>
-      </div>
-
-      <div class="nh-section">
-        <div class="nh-label">Auto-upload</div>
-        <div class="nh-value" id="nh-auto">—</div>
-      </div>
-
-      <button class="nh-button primary" id="nh-push-btn" disabled>Push to GitHub</button>
-      <button class="nh-button primary" id="nh-settings-btn" style="margin-top: 4px;">Settings</button>
-
-      <div class="nh-log" id="nh-log"></div>
-    </div>
-  `;
-
-  document.body.appendChild(panel);
-  updatePanel();
-}
-
-function setupPanelListeners() {
-  const closeBtn = document.querySelector<HTMLButtonElement>('#nh-close');
-  const settingsBtn = document.querySelector<HTMLButtonElement>('#nh-settings-btn');
-  const pushBtn = document.querySelector<HTMLButtonElement>('#nh-push-btn');
-
-  closeBtn?.addEventListener('click', () => {
-    const panel = document.querySelector('#neethub-panel') as HTMLElement | null;
-    if (panel) panel.style.display = 'none';
-  });
-
-  settingsBtn?.addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
-  });
-
-  pushBtn?.addEventListener('click', async () => {
-    // For testing: capture current page code if available
-    const code = extractPageCode();
-    if (!code) {
-      logPanel('No code found on page');
-      return;
-    }
-
-    const submission: SubmissionPayload = {
-      title: extractPageTitle() || 'Unknown Problem',
-      slug: (extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
-      language: 'javascript',
-      code,
-      runtime: 'n/a',
-      memory: 'n/a',
-      timestamp: Date.now(),
-    };
-
-    pushBtn.disabled = true;
-    logPanel('Pushing...');
-    await pushSubmission(submission, 'manual');
-    pushBtn.disabled = false;
-  });
-
-  // Refresh panel every 2 seconds
-  setInterval(updatePanel, 2000);
-}
-
-async function updatePanel() {
-  const settings = (await chrome.runtime.sendMessage({ type: 'get-settings' })) as Settings;
-
-  const statusEl = document.querySelector('#nh-status') as HTMLElement | null;
-  const repoEl = document.querySelector('#nh-repo') as HTMLElement | null;
-  const autoEl = document.querySelector('#nh-auto') as HTMLElement | null;
-  const pushBtn = document.querySelector<HTMLButtonElement>('#nh-push-btn');
-
-  if (statusEl) {
-    const isConnected = !!settings.auth?.accessToken;
-    statusEl.className = `nh-status ${isConnected ? 'connected' : 'disconnected'}`;
-    statusEl.innerText = isConnected ? '✓ Connected to GitHub' : '✗ Not Authorized';
-  }
-
-  if (repoEl) {
-    repoEl.innerText = settings.repo
-      ? `${settings.repo.owner}/${settings.repo.name}`
-      : 'Not configured';
-  }
-
-  if (autoEl) {
-    autoEl.innerText = settings.uploadEnabled ? 'Enabled' : 'Disabled';
-  }
-
-  if (pushBtn) {
-    pushBtn.disabled = !settings.auth?.accessToken || !settings.repo;
-  }
-}
-
-function logPanel(message: string) {
-  const logEl = document.querySelector('#nh-log');
-  if (!logEl) return;
-
-  const entry = document.createElement('div');
-  entry.className = 'nh-log-entry';
-  entry.innerText = `[${new Date().toLocaleTimeString()}] ${message}`;
-  logEl.appendChild(entry);
-
-  // Keep only last 5 entries
-  while (logEl.children.length > 5) {
-    logEl.removeChild(logEl.children[0]);
-  }
-
-  logEl.scrollTop = logEl.scrollHeight;
-}
-
-// Lightweight on-screen badge for success/failure feedback
+// Lightweight on-screen badge for success/failure feedback (hidden, kept for compatibility)
 const BADGE_ID = 'neethub-badge';
 let badgeHideTimer: number | undefined;
 
@@ -815,14 +608,12 @@ async function pushSubmission(payload: SubmissionPayload, source: string) {
     const response = await chrome.runtime.sendMessage({ type: 'submission', payload });
     if (response?.ok) {
       markRecent(payload);
-      logPanel(`✓ Pushed: ${payload.title}`);
-      log('Submission sent to background from', source);
+      log('Submission sent to background from', source, payload.title);
       showBadge('success');
       if (updateToolbar) updateToolbarStatus('success', `Pushed: ${payload.title}`);
     } else {
       const errorMsg = response?.error ?? 'unknown';
-      logPanel(`✗ Push failed: ${errorMsg}`);
-      warn('Submission failed', response?.error);
+      warn('Submission failed:', response?.error);
       showBadge('error');
       if (updateToolbar) {
         lastFailedSubmission = payload;
@@ -831,8 +622,7 @@ async function pushSubmission(payload: SubmissionPayload, source: string) {
     }
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    logPanel(`✗ Error: ${errorMsg}`);
-    warn('Failed to send submission', err);
+    warn('Failed to send submission:', err);
     showBadge('error');
     if (updateToolbar) {
       lastFailedSubmission = payload;
