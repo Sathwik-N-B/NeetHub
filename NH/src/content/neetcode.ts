@@ -109,78 +109,55 @@ function attemptToolbarInjection() {
     return;
   }
 
-  // Find the toolbar row that contains "Java" dropdown and "Auto" text
-  // This is the top bar of the code editor area
-  let toolbar: Element | null = null;
-  let insertBeforeEl: Element | null = null;
+  log('Attempting toolbar injection...');
 
-  // Strategy 1: Find the row containing "Auto" checkbox/label - that's our target row
-  const allText = document.evaluate(
-    "//*[contains(text(), 'Auto')]",
-    document,
-    null,
-    XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
-    null
-  );
+  // Debug: Log all elements with data-tooltip
+  const allTooltips = document.querySelectorAll('[data-tooltip]');
+  if (allTooltips.length > 0) {
+    log('Found elements with data-tooltip:', Array.from(allTooltips).map(el => ({
+      tooltip: el.getAttribute('data-tooltip'),
+      tagName: el.tagName,
+      href: el.getAttribute('href'),
+      classes: el.className
+    })));
+  }
+
+  // Find the Notes button - try multiple selectors
+  let notesBtn = document.querySelector('[data-tooltip="Notes"]');
   
-  for (let i = 0; i < allText.snapshotLength; i++) {
-    const el = allText.snapshotItem(i) as Element;
-    if (el && el.textContent?.trim() === 'Auto') {
-      // Found "Auto" label, get the parent row
-      const row = el.closest('div[class*="flex"]');
-      if (row) {
-        toolbar = row;
-        // Find the icons group on the right to insert before it
-        const buttons = row.querySelectorAll('button, [role="button"]');
-        if (buttons.length > 0) {
-          // Find the rightmost group of buttons/icons
-          for (const btn of buttons) {
-            const parent = btn.parentElement;
-            if (parent && parent !== row && parent.children.length > 1) {
-              insertBeforeEl = parent;
-              break;
-            }
-          }
-        }
-        break;
-      }
+  if (!notesBtn) {
+    // Try href-based selectors
+    notesBtn = document.querySelector('a[href*="/notes"]');
+  }
+  
+  if (!notesBtn) {
+    // Try finding by class and href pattern
+    notesBtn = document.querySelector('.toolbar-icon-btn[href*="notes"]');
+  }
+
+  if (!notesBtn) {
+    // Try finding any link with "notes" in the URL on the problem page
+    const allLinks = document.querySelectorAll('a[href*="notes"]');
+    log('Found links with "notes":', allLinks.length);
+    if (allLinks.length > 0) {
+      notesBtn = allLinks[0];
     }
   }
-
-  // Strategy 2: Find by looking for language selector dropdown
-  if (!toolbar) {
-    const selects = document.querySelectorAll('select, [role="combobox"], [role="listbox"]');
-    for (const sel of selects) {
-      const text = sel.textContent || '';
-      if (/Java|Python|C\+\+|JavaScript|Go|Ruby/i.test(text)) {
-        const row = sel.closest('div[class*="flex"]');
-        if (row) {
-          toolbar = row;
-          break;
-        }
-      }
-    }
+  
+  if (!notesBtn) {
+    log('Notes button not found yet...');
+    return;
   }
 
-  // Strategy 3: Look for the specific toolbar structure
-  if (!toolbar) {
-    // NeetCode typically has a flex row with items-center
-    const candidates = document.querySelectorAll('.flex.items-center');
-    for (const el of candidates) {
-      const hasLanguage = el.textContent?.match(/Java|Python|C\+\+/);
-      const hasAuto = el.textContent?.includes('Auto');
-      if (hasLanguage && hasAuto) {
-        toolbar = el;
-        break;
-      }
-    }
-  }
+  log('Found Notes button!', {
+    tagName: notesBtn.tagName,
+    href: notesBtn.getAttribute('href'),
+    classes: notesBtn.className,
+    parent: notesBtn.parentElement?.tagName,
+    parentClasses: notesBtn.parentElement?.className
+  });
 
-  if (!toolbar) {
-    return; // Will retry via observer
-  }
-
-  // Create the inline button that matches LeetCode's style
+  // Create the button
   const container = document.createElement('div');
   container.id = 'neethub-toolbar-btn';
   container.innerHTML = `
@@ -189,9 +166,8 @@ function attemptToolbarInjection() {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        margin-left: auto;
         margin-right: 8px;
-        padding: 4px 12px;
+        padding: 4px 10px;
         border-radius: 4px;
         cursor: pointer;
         font-size: 13px;
@@ -199,19 +175,20 @@ function attemptToolbarInjection() {
         font-family: inherit;
         transition: all 0.15s ease;
         user-select: none;
-        background: rgba(255,255,255,0.05);
+        background: transparent;
+        border: 1px solid transparent;
       }
       #neethub-toolbar-btn:hover {
-        background: rgba(255,255,255,0.15);
+        background: rgba(255,255,255,0.1);
       }
       #neethub-toolbar-btn .nh-icon {
-        width: 18px;
-        height: 18px;
+        width: 16px;
+        height: 16px;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 12px;
+        font-size: 10px;
         font-weight: bold;
         color: white;
         flex-shrink: 0;
@@ -235,36 +212,16 @@ function attemptToolbarInjection() {
       }
       #neethub-toolbar-btn .nh-text {
         color: #e5e7eb;
+        font-size: 12px;
       }
     </style>
     <span class="nh-icon idle" id="nh-tb-icon">✓</span>
     <span class="nh-text" id="nh-tb-text">Push</span>
   `;
 
-  // Insert into toolbar - try to insert before the right-side icons group
-  if (insertBeforeEl) {
-    toolbar.insertBefore(container, insertBeforeEl);
-  } else {
-    // Find the group of icon buttons on the right (usually has multiple svg/button children)
-    const children = Array.from(toolbar.children);
-    let insertPoint: Element | null = null;
-    
-    for (let i = children.length - 1; i >= 0; i--) {
-      const child = children[i];
-      // Look for the icons group - usually buttons or has multiple button children
-      if (child.querySelector('button') || child.querySelector('svg') || child.tagName === 'BUTTON') {
-        insertPoint = child;
-      } else {
-        break; // Stop when we hit non-icon content
-      }
-    }
-    
-    if (insertPoint) {
-      toolbar.insertBefore(container, insertPoint);
-    } else {
-      toolbar.appendChild(container);
-    }
-  }
+  // Insert right before the Notes button
+  notesBtn.parentElement?.insertBefore(container, notesBtn);
+  log('NeetHub button injected before Notes!');
 
   const iconEl = document.getElementById('nh-tb-icon')!;
   const textEl = document.getElementById('nh-tb-text')!;
@@ -298,8 +255,6 @@ function attemptToolbarInjection() {
 
     await doToolbarPush(iconEl, textEl, submission);
   });
-
-  log('Toolbar button injected (inline style)');
 }
 
 async function doToolbarPush(iconEl: HTMLElement, textEl: HTMLElement, submission: SubmissionPayload) {
