@@ -17,6 +17,9 @@ function initializeExtension() {
     // Inject toolbar button (inline in editor area)
     injectToolbarButton();
 
+    // Listen for Submit button clicks
+    attachSubmitButtonListener();
+
     // Auto-capture: hook fetch/XHR to detect submission responses
     patchFetch();
     patchXhr();
@@ -51,6 +54,96 @@ window.addEventListener('message', (event) => {
 let recentKeys = new Set<string>();
 const RECENT_TTL_MS = 10 * 60 * 1000; // dedupe window
 
+let isMonitoringSubmission = false;
+
+function attachSubmitButtonListener() {
+  // Use event delegation on document body to catch Submit button clicks
+  document.body.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement;
+    
+    // Check if clicked element or its parent is the Submit button
+    const submitButton = target.closest('button[type="submit"], button.is-success, .submit-button, button');
+
+    if (!submitButton) return;
+
+    // Verify by text content to avoid false positives
+    const text = submitButton.textContent?.trim().toLowerCase();
+    if (text === 'submit') {
+      log('Submit button clicked');
+      startMonitoringForAcceptance();
+    }
+  }, true); // Use capture phase to catch early
+}
+
+function startMonitoringForAcceptance() {
+  if (isMonitoringSubmission) {
+    log('Already monitoring a submission');
+    return;
+  }
+  
+  isMonitoringSubmission = true;
+  log('Started monitoring for accepted submission result...');
+  
+  // Poll for accepted result for up to 30 seconds
+  let attempts = 0;
+  const maxAttempts = 60; // 60 * 500ms = 30 seconds
+  
+  const checkInterval = setInterval(() => {
+    attempts++;
+    
+    if (attempts > maxAttempts) {
+      clearInterval(checkInterval);
+      isMonitoringSubmission = false;
+      log('Stopped monitoring: timeout reached');
+      return;
+    }
+    
+    // Check if page shows accepted
+    if (isPageShowingAcceptedSubmission()) {
+      clearInterval(checkInterval);
+      isMonitoringSubmission = false;
+      
+      log('Accepted submission detected! Auto-triggering push...');
+      
+      // Wait a bit for page to fully update, then trigger push
+      setTimeout(() => {
+        autoTriggerPush();
+      }, 1000);
+    }
+  }, 500);
+}
+
+function autoTriggerPush() {
+  // Extract submission data from page
+  const code = extractPageCode();
+  if (!code) {
+    warn('Cannot auto-push: no code found');
+    return;
+  }
+  
+  const submission: SubmissionPayload = {
+    title: extractPageTitle() || 'Unknown Problem',
+    slug: (extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
+    language: extractPageLanguage() || 'unknown',
+    code,
+    runtime: 'auto',
+    memory: 'auto',
+    timestamp: Date.now(),
+  };
+  
+  // Store as last accepted submission
+  lastAcceptedSubmission = submission;
+  
+  // Check for duplicates
+  if (isRecent(submission)) {
+    log('Auto-push skipped: duplicate submission');
+    return;
+  }
+  
+  log('Auto-triggering push for:', submission.title);
+  void pushSubmission(submission, 'auto-trigger', true);
+}
+
 // NeetCode endpoints observed in DevTools
 // Only 'submit' and 'submission' are actual submission endpoints
 // 'runCode' and 'executeCode' are for testing, not submissions
@@ -70,11 +163,16 @@ function urlLooksLikeSubmission(url?: string): boolean {
   
   // Exclude run code endpoints
   if (RUN_CODE_ENDPOINT_HINTS.some((hint) => lower.includes(hint))) {
+    log('Excluded run code endpoint:', url);
     return false;
   }
   
   // Only match actual submission endpoints
-  return SUBMISSION_ENDPOINT_HINTS.some((hint) => lower.includes(hint)) && lower.includes('neetcode');
+  const isSubmission = SUBMISSION_ENDPOINT_HINTS.some((hint) => lower.includes(hint)) && lower.includes('neetcode');
+  if (isSubmission) {
+    log('Detected submission endpoint:', url);
+  }
+  return isSubmission;
 }
 
 function debugCapture(url: string, requestBody: unknown, responseData: unknown) {
@@ -83,12 +181,27 @@ function debugCapture(url: string, requestBody: unknown, responseData: unknown) 
     console.info('URL:', url);
     console.info('Request body:', requestBody);
     console.info('Response:', responseData);
+    
+    // Log acceptance detection
+    if (responseData && typeof responseData === 'object') {
+      const root = responseData as Record<string, unknown>;
+      const data = root.data;
+      if (data && typeof data === 'object') {
+        const single = data as Record<string, unknown>;
+        const status = single.status as Record<string, unknown> | undefined;
+        if (status?.description) {
+          console.info('Status description:', status.description);
+        }
+      }
+    }
+    
     console.groupEnd();
   } catch {}
 }
 
 // Track last submission for retry
 let lastFailedSubmission: SubmissionPayload | null = null;
+let lastAcceptedSubmission: SubmissionPayload | null = null; // Track last accepted submission
 let toolbarButtonState: 'idle' | 'pushing' | 'success' | 'error' = 'idle';
 
 function injectToolbarButton() {
@@ -246,7 +359,31 @@ function attemptToolbarInjection() {
       return;
     }
 
-    // Manual push: extract current code from editor (no acceptance check required)
+    // Manual push: Check if page shows accepted status OR we have stored accepted submission
+    const pageShowsAccepted = isPageShowingAcceptedSubmission();
+    const hasStoredAccepted = lastAcceptedSubmission !== null;
+    
+    if (!pageShowsAccepted && !hasStoredAccepted) {
+      iconEl.className = 'nh-icon error';
+      iconEl.textContent = '✗';
+      textEl.textContent = 'Not accepted';
+      setTimeout(() => {
+        iconEl.className = 'nh-icon idle';
+        iconEl.textContent = '✓';
+        textEl.textContent = 'Push';
+      }, 2500);
+      log('Manual push blocked: no accepted submission found on page');
+      return;
+    }
+
+    // If we have stored accepted submission, use it
+    if (hasStoredAccepted) {
+      log('Manual push using stored accepted submission');
+      await doToolbarPush(iconEl, textEl, lastAcceptedSubmission!);
+      return;
+    }
+
+    // Otherwise, extract from current page
     const code = extractPageCode();
     if (!code) {
       iconEl.className = 'nh-icon error';
@@ -270,7 +407,7 @@ function attemptToolbarInjection() {
       timestamp: Date.now(),
     };
 
-    log('Manual push initiated from toolbar');
+    log('Manual push initiated from toolbar with page code');
     await doToolbarPush(iconEl, textEl, submission);
   });
 }
@@ -427,6 +564,50 @@ function extractPageSlug(): string | undefined {
   return match?.[1];
 }
 
+function isPageShowingAcceptedSubmission(): boolean {
+  // Check for CURRENT submission result showing "Accepted" - be very specific
+  
+  // Method 1: Look for green "Accepted" text in the test results area
+  const acceptedElements = document.querySelectorAll('*');
+  for (const el of acceptedElements) {
+    const text = el.textContent?.trim();
+    // Only check elements with exactly "Accepted" and green color styling
+    if (text === 'Accepted') {
+      const color = window.getComputedStyle(el).color;
+      // Green text indicates accepted (rgb values for green)
+      if (color.includes('34, 197') || color.includes('22, 197') || color.includes('0, 255, 0') || color.includes('green')) {
+        log('Found green "Accepted" text indicator');
+        return true;
+      }
+    }
+  }
+  
+  // Method 2: Check for "Passed test cases: X / X" where both numbers match
+  const passedText = document.body?.innerText || '';
+  const passedMatch = passedText.match(/Passed test cases:\s*(\d+)\s*\/\s*(\d+)/);
+  if (passedMatch) {
+    const passed = parseInt(passedMatch[1]);
+    const total = parseInt(passedMatch[2]);
+    if (passed > 0 && passed === total) {
+      log('Found matching passed test cases:', passed, '/', total);
+      return true;
+    }
+  }
+  
+  // Method 3: Check submissions page for "Accepted" with test case count
+  if (window.location.pathname.includes('/submissions')) {
+    const hasAccepted = passedText.includes('Accepted');
+    const hasTestCases = /\d+\s*\/\s*\d+\s*test cases/.test(passedText);
+    if (hasAccepted && hasTestCases) {
+      log('Submissions page shows accepted solution');
+      return true;
+    }
+  }
+  
+  log('No accepted submission status found on page');
+  return false;
+}
+
 function extractPageLanguage(): string | undefined {
   // Try common elements showing selected language
   const candidates = [
@@ -575,11 +756,14 @@ function handleCandidate(data: unknown, source: string, requestData?: unknown) {
     return;
   }
 
+  // Store last accepted submission for manual push button
+  lastAcceptedSubmission = payload;
+
   log('NeetHub: accepted submission detected, auto-pushing...');
-  void pushSubmission(payload, source);
+  void pushSubmission(payload, source, true); // true = auto-triggered
 }
 
-async function pushSubmission(payload: SubmissionPayload, source: string) {
+async function pushSubmission(payload: SubmissionPayload, source: string, autoTriggered = false) {
   // Skip toolbar status update if this came from the toolbar itself (it handles its own UI)
   const updateToolbar = source !== 'toolbar';
   
@@ -592,7 +776,12 @@ async function pushSubmission(payload: SubmissionPayload, source: string) {
       markRecent(payload);
       log('Submission sent to background from', source, payload.title);
       showBadge('success');
-      if (updateToolbar) updateToolbarStatus('success', `Pushed: ${payload.title}`);
+      if (updateToolbar) {
+        updateToolbarStatus('success', `Pushed: ${payload.title}`);
+        if (autoTriggered) {
+          log('Auto-push completed, toolbar button updated');
+        }
+      }
     } else {
       const errorMsg = response?.error ?? 'unknown';
       warn('Submission failed:', response?.error);
