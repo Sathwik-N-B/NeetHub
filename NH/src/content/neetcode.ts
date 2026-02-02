@@ -51,19 +51,30 @@ window.addEventListener('message', (event) => {
 let recentKeys = new Set<string>();
 const RECENT_TTL_MS = 10 * 60 * 1000; // dedupe window
 
-// NeetCode endpoints observed in DevTools; treat these as submission-related
-const NEETCODE_ENDPOINT_HINTS = [
+// NeetCode endpoints observed in DevTools
+// Only 'submit' and 'submission' are actual submission endpoints
+// 'runCode' and 'executeCode' are for testing, not submissions
+const SUBMISSION_ENDPOINT_HINTS = [
   'submission',
   'submit',
-  'judge',
-  'runCodeFunctionHttp',
-  'executeCodeFunctionHttp',
+];
+
+const RUN_CODE_ENDPOINT_HINTS = [
+  'runcode',
+  'executecode',
 ];
 
 function urlLooksLikeSubmission(url?: string): boolean {
   if (!url) return false;
   const lower = url.toLowerCase();
-  return NEETCODE_ENDPOINT_HINTS.some((hint) => lower.includes(hint)) && lower.includes('neetcode');
+  
+  // Exclude run code endpoints
+  if (RUN_CODE_ENDPOINT_HINTS.some((hint) => lower.includes(hint))) {
+    return false;
+  }
+  
+  // Only match actual submission endpoints
+  return SUBMISSION_ENDPOINT_HINTS.some((hint) => lower.includes(hint)) && lower.includes('neetcode');
 }
 
 function debugCapture(url: string, requestBody: unknown, responseData: unknown) {
@@ -235,11 +246,17 @@ function attemptToolbarInjection() {
       return;
     }
 
-    // Otherwise, push current code
+    // Manual push: extract current code from editor (no acceptance check required)
     const code = extractPageCode();
     if (!code) {
+      iconEl.className = 'nh-icon error';
+      iconEl.textContent = '✗';
       textEl.textContent = 'No code';
-      setTimeout(() => { textEl.textContent = 'Push'; }, 2000);
+      setTimeout(() => {
+        iconEl.className = 'nh-icon idle';
+        iconEl.textContent = '✓';
+        textEl.textContent = 'Push';
+      }, 2000);
       return;
     }
 
@@ -248,11 +265,12 @@ function attemptToolbarInjection() {
       slug: (extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
       language: extractPageLanguage() || 'unknown',
       code,
-      runtime: 'n/a',
-      memory: 'n/a',
+      runtime: 'manual',
+      memory: 'manual',
       timestamp: Date.now(),
     };
 
+    log('Manual push initiated from toolbar');
     await doToolbarPush(iconEl, textEl, submission);
   });
 }
@@ -541,14 +559,23 @@ function tryCaptureFromText(text: string, url?: string, requestData?: unknown) {
 }
 
 function handleCandidate(data: unknown, source: string, requestData?: unknown) {
-  const payload = extractSubmission(data, requestData);
-  if (!payload) return;
+  const result = extractSubmission(data, requestData);
+  if (!result) return;
+
+  const { payload, isAccepted } = result;
+
+  // Auto-capture only pushes ACCEPTED submissions
+  if (!isAccepted) {
+    log('NeetHub: submission not accepted, skipping auto-push');
+    return;
+  }
 
   if (isRecent(payload)) {
     log('NeetHub: duplicate submission skipped');
     return;
   }
 
+  log('NeetHub: accepted submission detected, auto-pushing...');
   void pushSubmission(payload, source);
 }
 
@@ -586,7 +613,12 @@ async function pushSubmission(payload: SubmissionPayload, source: string) {
   }
 }
 
-function extractSubmission(data: unknown, requestData?: unknown): SubmissionPayload | undefined {
+type SubmissionExtractionResult = {
+  payload: SubmissionPayload;
+  isAccepted: boolean;
+};
+
+function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtractionResult | undefined {
   if (!data || typeof data !== 'object') return undefined;
 
   const root = data as Record<string, unknown>;
@@ -603,20 +635,26 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionPayl
     problemId = getString(req, ['problemId', 'slug', 'titleSlug', 'questionSlug']);
   }
 
-  // Handle executeCodeFunctionHttp: data is a single object
+  // Check for accepted status in the response
+  let isAccepted = false;
+
+  // Handle submission response: data is a single object or has status
   const singleResult = root.data as Record<string, unknown> | undefined;
   if (singleResult && typeof singleResult === 'object' && !Array.isArray(singleResult)) {
     const status = singleResult.status as Record<string, unknown> | undefined;
     const desc = status?.description as string | undefined;
+    
+    // Check if this submission was ACCEPTED
+    isAccepted = desc?.toLowerCase() === 'accepted';
 
-    // Only proceed if accepted or we have code from request
-    if (desc?.toLowerCase() === 'accepted' || code) {
+    // Only extract if we have code and it's accepted
+    if (isAccepted && code && lang) {
       const runtime = getMetric(singleResult, ['time', 'wall_time']);
       const memory = getMetric(singleResult, ['memory']);
       const ts = getTimestamp(singleResult, ['finished_at', 'created_at']);
 
-      if (code && lang) {
-        return {
+      return {
+        payload: {
           title: extractPageTitle() || problemId || 'Unknown Problem',
           slug: (problemId || extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
           language: lang,
@@ -624,51 +662,65 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionPayl
           runtime: runtime ?? 'n/a',
           memory: memory ?? 'n/a',
           timestamp: ts ?? Date.now(),
+        },
+        isAccepted: true,
+      };
+    }
+  }
+
+  // Handle array response: data is an array of results
+  const arr = Array.isArray(root.data) ? (root.data as Array<Record<string, unknown>>) : undefined;
+  if (arr && arr.length) {
+    // Check if ANY result is accepted
+    const acceptedItem = [...arr].reverse().find((item) => {
+      const status = item.status as Record<string, unknown> | undefined;
+      const desc = status?.description as string | undefined;
+      return desc?.toLowerCase() === 'accepted';
+    });
+
+    isAccepted = !!acceptedItem;
+
+    if (isAccepted && acceptedItem) {
+      const runtime = getMetric(acceptedItem, ['time', 'wall_time']);
+      const memory = getMetric(acceptedItem, ['memory']);
+      const ts = getTimestamp(acceptedItem, ['finished_at', 'created_at']);
+
+      const finalCode = code ?? extractPageCode();
+      const finalLang = lang ?? extractPageLanguage() ?? 'unknown';
+
+      if (finalCode) {
+        return {
+          payload: {
+            title: extractPageTitle() || problemId || 'Unknown Problem',
+            slug: (problemId || extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
+            language: finalLang,
+            code: finalCode,
+            runtime: runtime ?? 'n/a',
+            memory: memory ?? 'n/a',
+            timestamp: ts ?? Date.now(),
+          },
+          isAccepted: true,
         };
       }
     }
   }
 
-  // Handle runCodeFunctionHttp: data is an array of results
-  const arr = Array.isArray(root.data) ? (root.data as Array<Record<string, unknown>>) : undefined;
-  if (arr && arr.length) {
-    // Prefer the last accepted item
-    const accepted = [...arr].reverse().find((item) => {
-      const status = item.status as Record<string, unknown> | undefined;
-      const desc = status?.description as string | undefined;
-      return desc?.toLowerCase() === 'accepted';
-    }) ?? arr[arr.length - 1];
-
-    const runtime = getMetric(accepted, ['time', 'wall_time']);
-    const memory = getMetric(accepted, ['memory']);
-    const ts = getTimestamp(accepted, ['finished_at', 'created_at']);
-
-    // Use request code if available, otherwise fallback to page extraction
-    const finalCode = code ?? extractPageCode();
-    const finalLang = lang ?? extractPageLanguage() ?? 'unknown';
-
-    if (finalCode) {
-      return {
-        title: extractPageTitle() || problemId || 'Unknown Problem',
-        slug: (problemId || extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
-        language: finalLang,
-        code: finalCode,
-        runtime: runtime ?? 'n/a',
-        memory: memory ?? 'n/a',
-        timestamp: ts ?? Date.now(),
-      };
-    }
-  }
-
-  // Fallback: generic BFS for other shapes
+  // Fallback: generic BFS for other shapes (still check for accepted status)
   const queue: unknown[] = [data];
   let steps = 0;
+  let foundAccepted = false;
 
   while (queue.length && steps < 200) {
     steps += 1;
     const current = queue.shift();
     if (!current || typeof current !== 'object') continue;
     const candidate = current as Record<string, unknown>;
+
+    // Check for accepted status
+    const statusDesc = getString(candidate, ['status', 'statusDescription', 'description']);
+    if (statusDesc?.toLowerCase() === 'accepted') {
+      foundAccepted = true;
+    }
 
     const cCode = getString(candidate, ['code', 'solution', 'answer']);
     const cLang = getString(candidate, ['lang', 'language', 'langSlug']);
@@ -678,15 +730,18 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionPayl
     const cMemory = getMetric(candidate, ['memory', 'mem']);
     const cTs = getTimestamp(candidate, ['timestamp', 'createdAt', 'submittedAt']);
 
-    if (cCode && (cTitle || cSlug) && cLang) {
+    if (cCode && (cTitle || cSlug) && cLang && foundAccepted) {
       return {
-        title: cTitle ?? cSlug ?? 'Unknown Problem',
-        slug: (cSlug ?? cTitle ?? 'unknown').toLowerCase().replace(/\s+/g, '-'),
-        language: cLang,
-        code: cCode,
-        runtime: cRuntime ?? 'n/a',
-        memory: cMemory ?? 'n/a',
-        timestamp: cTs ?? Date.now(),
+        payload: {
+          title: cTitle ?? cSlug ?? 'Unknown Problem',
+          slug: (cSlug ?? cTitle ?? 'unknown').toLowerCase().replace(/\s+/g, '-'),
+          language: cLang,
+          code: cCode,
+          runtime: cRuntime ?? 'n/a',
+          memory: cMemory ?? 'n/a',
+          timestamp: cTs ?? Date.now(),
+        },
+        isAccepted: true,
       };
     }
 
