@@ -104,21 +104,26 @@ async function handleSubmission(submission: SubmissionPayload) {
     await ensureRepo(settings.auth.accessToken, settings.repo);
     await commitSubmission(settings.auth.accessToken, settings.repo, submission);
     log('Submission pushed');
-    // Notify user on success
-    void chrome.notifications.create({
-      type: 'basic',
-      title: 'NeetHub',
-      message: `✓ Committed: ${submission.title}`,
-    });
+    void setBadge('success');
     return { ok: true };
   } catch (err) {
     warn('Submission failed', err);
-    // Notify user on failure
-    void chrome.notifications.create({
-      type: 'basic',
-      title: 'NeetHub',
-      message: `✗ Commit failed: ${err instanceof Error ? err.message : String(err)}`,
-    });
+    void setBadge('error');
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function setBadge(state: 'success' | 'error') {
+  const text = state === 'success' ? '✓' : '!';
+  const color = state === 'success' ? '#16a34a' : '#dc2626';
+
+  try {
+    await chrome.action?.setBadgeBackgroundColor({ color });
+    await chrome.action?.setBadgeText({ text });
+    setTimeout(() => {
+      void chrome.action?.setBadgeText({ text: '' });
+    }, 3000);
+  } catch {
+    // ignore badge failures
   }
 }

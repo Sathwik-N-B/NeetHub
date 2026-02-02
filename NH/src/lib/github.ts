@@ -124,14 +124,21 @@ export async function commitSubmission(token: string, repo: RepoConfig, submissi
 
   const content = toBase64(formatFile(submission));
 
+  const existingSha = await getExistingFileSha(token, repo, path);
+
+  const body: Record<string, unknown> = {
+    message,
+    content,
+  };
+  if (existingSha) {
+    body.sha = existingSha;
+  }
+
   const response = await fetchGitHub(
     `/repos/${repo.owner}/${repo.name}/contents/${path}`,
     token,
     'PUT',
-    {
-      message,
-      content,
-    },
+    body,
   );
 
   if (!response.ok) {
@@ -139,6 +146,23 @@ export async function commitSubmission(token: string, repo: RepoConfig, submissi
     error('Failed to commit submission', text);
     throw new Error(`Commit failed: ${response.status}`);
   }
+}
+
+async function getExistingFileSha(token: string, repo: RepoConfig, path: string): Promise<string | undefined> {
+  const response = await fetchGitHub<{ sha?: string }>(
+    `/repos/${repo.owner}/${repo.name}/contents/${path}`,
+    token,
+  );
+
+  if (response.ok) {
+    const sha = response.data?.sha;
+    return typeof sha === 'string' && sha.length > 0 ? sha : undefined;
+  }
+
+  if (response.status === 404) return undefined;
+
+  const text = await response.text();
+  throw new Error(`Failed to check existing file: ${response.status} ${text || ''}`.trim());
 }
 
 function formatFile(submission: SubmissionPayload): string {
