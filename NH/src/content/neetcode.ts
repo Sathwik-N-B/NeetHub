@@ -133,6 +133,7 @@ function autoTriggerPush() {
     runtime: 'auto',
     memory: 'auto',
     timestamp: Date.now(),
+    url: window.location.href,
   };
   
   // Store as last accepted submission
@@ -679,7 +680,8 @@ function patchXhr() {
 
     open(method: string, url: string | URL, async?: boolean, username?: string) {
       this._url = typeof url === 'string' ? url : url.toString();
-      return super.open(method, url as any, async, username);
+      const isAsync = async ?? true;
+      return super.open(method, url as any, isAsync, username);
     }
 
     send(body?: Document | BodyInit | null) {
@@ -848,6 +850,7 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
           runtime: runtime ?? 'n/a',
           memory: memory ?? 'n/a',
           timestamp: ts ?? Date.now(),
+          url: window.location.href,
         },
         isAccepted: true,
       };
@@ -884,6 +887,7 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
             runtime: runtime ?? 'n/a',
             memory: memory ?? 'n/a',
             timestamp: ts ?? Date.now(),
+            url: window.location.href,
           },
           isAccepted: true,
         };
@@ -926,6 +930,7 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
           runtime: cRuntime ?? 'n/a',
           memory: cMemory ?? 'n/a',
           timestamp: cTs ?? Date.now(),
+          url: window.location.href,
         },
         isAccepted: true,
       };

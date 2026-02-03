@@ -116,36 +116,30 @@ export type SubmissionPayload = {
   runtime: string;
   memory: string;
   timestamp: number;
+      url?: string;
 };
 
 export async function commitSubmission(token: string, repo: RepoConfig, submission: SubmissionPayload): Promise<void> {
-  const path = buildPath(submission);
-  const message = `Add ${submission.title}`;
+  const codePath = buildCodePath(submission);
+  const readmePath = buildReadmePath(submission);
 
-  const content = toBase64(formatFile(submission));
+  const statsMessage = buildStatsMessage(submission);
 
-  const existingSha = await getExistingFileSha(token, repo, path);
-
-  const body: Record<string, unknown> = {
-    message,
-    content,
-  };
-  if (existingSha) {
-    body.sha = existingSha;
-  }
-
-  const response = await fetchGitHub(
-    `/repos/${repo.owner}/${repo.name}/contents/${path}`,
+  await commitFile(
     token,
-    'PUT',
-    body,
+    repo,
+    readmePath,
+    toBase64(formatReadme(submission)),
+    `Update README: ${submission.title}`,
   );
 
-  if (!response.ok) {
-    const text = await response.text();
-    error('Failed to commit submission', text);
-    throw new Error(`Commit failed: ${response.status}`);
-  }
+  await commitFile(
+    token,
+    repo,
+    codePath,
+    toBase64(formatCodeFile(submission)),
+    statsMessage,
+  );
 }
 
 async function getExistingFileSha(token: string, repo: RepoConfig, path: string): Promise<string | undefined> {
@@ -165,15 +159,35 @@ async function getExistingFileSha(token: string, repo: RepoConfig, path: string)
   throw new Error(`Failed to check existing file: ${response.status} ${text || ''}`.trim());
 }
 
-function formatFile(submission: SubmissionPayload): string {
+const BASE_PATH = 'NeetCode';
+
+function formatCodeFile(submission: SubmissionPayload): string {
   return `// NeetCode: ${submission.title}\n// Runtime: ${submission.runtime}, Memory: ${submission.memory}\n// Submitted: ${new Date(submission.timestamp).toISOString()}\n\n${submission.code}\n`;
 }
 
-function buildPath(submission: SubmissionPayload): string {
-  const date = new Date(submission.timestamp);
-  const folder = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+function formatReadme(submission: SubmissionPayload): string {
+  const submitted = new Date(submission.timestamp).toISOString();
+  const urlLine = submission.url ? `- URL: ${submission.url}\n` : '';
+  return `# ${submission.title}\n\n${urlLine}- Language: ${submission.language}\n- Runtime: ${submission.runtime}\n- Memory: ${submission.memory}\n- Submitted: ${submitted}\n`;
+}
+
+function buildFolder(submission: SubmissionPayload): string {
+  return `${BASE_PATH}/${submission.slug}`;
+}
+
+function buildCodePath(submission: SubmissionPayload): string {
   const filename = `${submission.slug}.${extensionFor(submission.language)}`;
-  return `${folder}/${filename}`;
+  return `${buildFolder(submission)}/${filename}`;
+}
+
+function buildReadmePath(submission: SubmissionPayload): string {
+  return `${buildFolder(submission)}/README.md`;
+}
+
+function buildStatsMessage(submission: SubmissionPayload): string {
+  const runtime = submission.runtime || 'n/a';
+  const memory = submission.memory || 'n/a';
+  return `Time: ${runtime}, Memory: ${memory} - NeetHub`;
 }
 
 function extensionFor(language: string): string {
@@ -197,6 +211,36 @@ function toBase64(text: string): string {
   });
 
   return btoa(binary);
+}
+
+async function commitFile(
+  token: string,
+  repo: RepoConfig,
+  path: string,
+  content: string,
+  message: string,
+): Promise<void> {
+  const existingSha = await getExistingFileSha(token, repo, path);
+  const body: Record<string, unknown> = {
+    message,
+    content,
+  };
+  if (existingSha) {
+    body.sha = existingSha;
+  }
+
+  const response = await fetchGitHub(
+    `/repos/${repo.owner}/${repo.name}/contents/${path}`,
+    token,
+    'PUT',
+    body,
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    error('Failed to commit file', text);
+    throw new Error(`Commit failed: ${response.status}`);
+  }
 }
 
 async function fetchGitHub<T = unknown>(path: string, token: string, method = 'GET', body?: unknown) {
