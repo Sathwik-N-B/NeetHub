@@ -10,6 +10,15 @@ function warn(...args: unknown[]) {
   console.warn('[NeetHub]', ...args);
 }
 
+// Track last submission for retry - MUST be declared before any function that uses them
+let recentKeys = new Set<string>();
+const RECENT_TTL_MS = 10 * 60 * 1000; // dedupe window
+
+let isMonitoringSubmission = false;
+let lastFailedSubmission: SubmissionPayload | null = null;
+let lastAcceptedSubmission: SubmissionPayload | null = null; // Track last accepted submission
+let currentProblemSlug: string | null = null; // Track current problem to reset state on navigation
+let toolbarButtonState: 'idle' | 'pushing' | 'success' | 'error' = 'idle';
 
 // Ensure DOM is ready before injecting
 function initializeExtension() {
@@ -50,11 +59,6 @@ window.addEventListener('message', (event) => {
 
   void pushSubmission(payload, 'postMessage');
 });
-
-let recentKeys = new Set<string>();
-const RECENT_TTL_MS = 10 * 60 * 1000; // dedupe window
-
-let isMonitoringSubmission = false;
 
 function attachSubmitButtonListener() {
   // Use event delegation on document body to catch Submit button clicks
@@ -198,12 +202,6 @@ function debugCapture(url: string, requestBody: unknown, responseData: unknown) 
     console.groupEnd();
   } catch {}
 }
-
-// Track last submission for retry
-let lastFailedSubmission: SubmissionPayload | null = null;
-let lastAcceptedSubmission: SubmissionPayload | null = null; // Track last accepted submission
-let currentProblemSlug: string | null = null; // Track current problem to reset state on navigation
-let toolbarButtonState: 'idle' | 'pushing' | 'success' | 'error' = 'idle';
 
 function injectToolbarButton() {
   // Wait a bit for the page to fully render, then keep trying
