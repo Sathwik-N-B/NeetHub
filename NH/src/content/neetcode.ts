@@ -202,6 +202,7 @@ function debugCapture(url: string, requestBody: unknown, responseData: unknown) 
 // Track last submission for retry
 let lastFailedSubmission: SubmissionPayload | null = null;
 let lastAcceptedSubmission: SubmissionPayload | null = null; // Track last accepted submission
+let currentProblemSlug: string | null = null; // Track current problem to reset state on navigation
 let toolbarButtonState: 'idle' | 'pushing' | 'success' | 'error' = 'idle';
 
 function injectToolbarButton() {
@@ -227,11 +228,29 @@ function injectToolbarButton() {
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
+function checkAndResetProblemState() {
+  const currentSlug = extractPageSlug();
+  if (currentSlug && currentSlug !== currentProblemSlug) {
+    // Problem changed - reset state
+    log('Problem changed from', currentProblemSlug, 'to', currentSlug, '- resetting state');
+    currentProblemSlug = currentSlug;
+    lastAcceptedSubmission = null;
+    lastFailedSubmission = null;
+    isMonitoringSubmission = false;
+  } else if (currentSlug && !currentProblemSlug) {
+    // First problem load
+    currentProblemSlug = currentSlug;
+  }
+}
+
 function attemptToolbarInjection() {
   // Check if already injected
   if (document.getElementById('neethub-toolbar-btn')) {
     return;
   }
+  
+  // Check if problem changed and reset state if needed
+  checkAndResetProblemState();
 
   log('Attempting toolbar injection...');
 
@@ -353,17 +372,24 @@ function attemptToolbarInjection() {
   container.addEventListener('click', async () => {
     if (toolbarButtonState === 'pushing') return;
 
+    // Check if problem changed and reset state if needed
+    checkAndResetProblemState();
+
     // If error state, retry last failed submission
     if (toolbarButtonState === 'error' && lastFailedSubmission) {
       await doToolbarPush(iconEl, textEl, lastFailedSubmission);
       return;
     }
 
-    // Manual push: Check if page shows accepted status OR we have stored accepted submission
-    const pageShowsAccepted = isPageShowingAcceptedSubmission();
-    const hasStoredAccepted = lastAcceptedSubmission !== null;
+    // Manual push: ONLY allow if we have accepted submission from auto-trigger for THIS problem
+    const currentSlug = extractPageSlug();
     
-    if (!pageShowsAccepted && !hasStoredAccepted) {
+    // Check if we have accepted submission from THIS session AND it matches current problem
+    const hasSessionAccepted = lastAcceptedSubmission !== null && 
+                                currentSlug && 
+                                lastAcceptedSubmission.slug === currentSlug.toLowerCase().replace(/\s+/g, '-');
+    
+    if (!hasSessionAccepted) {
       iconEl.className = 'nh-icon error';
       iconEl.textContent = '✗';
       textEl.textContent = 'Not accepted';
@@ -376,39 +402,9 @@ function attemptToolbarInjection() {
       return;
     }
 
-    // If we have stored accepted submission, use it
-    if (hasStoredAccepted) {
-      log('Manual push using stored accepted submission');
-      await doToolbarPush(iconEl, textEl, lastAcceptedSubmission!);
-      return;
-    }
-
-    // Otherwise, extract from current page
-    const code = extractPageCode();
-    if (!code) {
-      iconEl.className = 'nh-icon error';
-      iconEl.textContent = '✗';
-      textEl.textContent = 'No code';
-      setTimeout(() => {
-        iconEl.className = 'nh-icon idle';
-        iconEl.textContent = '✓';
-        textEl.textContent = 'Push';
-      }, 2000);
-      return;
-    }
-
-    const submission: SubmissionPayload = {
-      title: extractPageTitle() || 'Unknown Problem',
-      slug: (extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
-      language: extractPageLanguage() || 'unknown',
-      code,
-      runtime: 'manual',
-      memory: 'manual',
-      timestamp: Date.now(),
-    };
-
-    log('Manual push initiated from toolbar with page code');
-    await doToolbarPush(iconEl, textEl, submission);
+    // Use accepted submission from current session for THIS problem
+    log('Manual push using stored accepted submission');
+    await doToolbarPush(iconEl, textEl, lastAcceptedSubmission!);
   });
 }
 
@@ -565,13 +561,15 @@ function extractPageSlug(): string | undefined {
 }
 
 function isPageShowingAcceptedSubmission(): boolean {
-  // Check for CURRENT submission result showing "Accepted" - be very specific
+  // Check for CURRENT submission result showing "Accepted" - ONLY after submission
+  // Similar to LeetHub's approach, check for success/accepted status
   
-  // Method 1: Look for green "Accepted" text in the test results area
+  // Method 1: Look for green "Accepted" text or success status element
   const acceptedElements = document.querySelectorAll('*');
   for (const el of acceptedElements) {
     const text = el.textContent?.trim();
-    // Only check elements with exactly "Accepted" and green color styling
+    
+    // Check for "Accepted" text with green color
     if (text === 'Accepted') {
       const color = window.getComputedStyle(el).color;
       // Green text indicates accepted (rgb values for green)
@@ -580,21 +578,22 @@ function isPageShowingAcceptedSubmission(): boolean {
         return true;
       }
     }
-  }
-  
-  // Method 2: Check for "Passed test cases: X / X" where both numbers match
-  const passedText = document.body?.innerText || '';
-  const passedMatch = passedText.match(/Passed test cases:\s*(\d+)\s*\/\s*(\d+)/);
-  if (passedMatch) {
-    const passed = parseInt(passedMatch[1]);
-    const total = parseInt(passedMatch[2]);
-    if (passed > 0 && passed === total) {
-      log('Found matching passed test cases:', passed, '/', total);
+    
+    // Check for success-related classes or data attributes
+    const classList = el.className?.toString() || '';
+    const dataAttrs = Array.from(el.attributes || [])
+      .map(attr => `${attr.name}=${attr.value}`)
+      .join(' ');
+    
+    if ((classList.includes('success') || classList.includes('accepted') || classList.includes('Accepted')) &&
+        (text === 'Accepted' || text?.includes('Accepted'))) {
+      log('Found success status element with accepted class');
       return true;
     }
   }
   
-  // Method 3: Check submissions page for "Accepted" with test case count
+  // Method 2: Check submissions page for "Accepted" with test case count
+  const passedText = document.body?.innerText || '';
   if (window.location.pathname.includes('/submissions')) {
     const hasAccepted = passedText.includes('Accepted');
     const hasTestCases = /\d+\s*\/\s*\d+\s*test cases/.test(passedText);
