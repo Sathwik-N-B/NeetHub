@@ -544,8 +544,11 @@ function showBadge(state: 'pending' | 'success' | 'error') {
 }
 
 function extractPageTitle(): string | undefined {
-  // Try common selectors for problem title
+  // Try common selectors for problem title on NeetCode
   const selectors = [
+    'app-prompt h1',
+    'app-prompt [class*="title"]',
+    'app-article h1',
     'h1',
     '[data-test*="title"]',
     '.problem-title',
@@ -554,7 +557,10 @@ function extractPageTitle(): string | undefined {
 
   for (const sel of selectors) {
     const el = document.querySelector(sel);
-    if (el) return el.textContent?.trim();
+    const text = el?.textContent?.trim();
+    if (text && text.length > 0) {
+      return text;
+    }
   }
 
   return undefined;
@@ -591,12 +597,24 @@ async function enrichSubmissionPayload(payload: SubmissionPayload): Promise<Subm
     description = undefined;
   }
 
-  if (!title || !description || !difficulty || !problemNumber) {
+  // Check if title is a submission status message (not actual problem name)
+  const isSubmissionStatus = title && ['accepted', 'rejected', 'pending', 'wrong answer', 'time limit exceeded'].includes(title.toLowerCase());
+
+  if (isSubmissionStatus || !title || !description || !difficulty || !problemNumber) {
     const info = await fetchProblemInfo(slug);
+    title = !isSubmissionStatus ? title : info.title;
     title = title || info.title;
     difficulty = difficulty || info.difficulty;
     description = description || info.description;
     problemNumber = problemNumber || info.problemNumber;
+  }
+
+  // Fallback: if still no title, format from slug
+  if (!title && slug) {
+    title = slug
+      .split('-')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
   }
 
   return {
@@ -643,15 +661,30 @@ async function fetchProblemInfo(
 
 function extractTitleFromDoc(doc: Document): string | undefined {
   // Try to find the title with problem number (like "1. Two Sum")
-  const h1 = doc.querySelector('h1, .problem-title, [class*="title"]');
-  if (h1?.textContent?.trim()) {
-    const text = h1.textContent.trim();
-    // If it contains a number at the start, keep it; otherwise add context
-    if (/^\d+\./.test(text)) {
-      return text;
+  
+  // First try: look for title in app-prompt or common heading selectors
+  const selectors = [
+    'app-prompt h1',
+    'app-prompt [class*="title"]',
+    'h1',
+    '.problem-title',
+    '.question-title',
+    '[data-test*="title"]',
+    'app-article h1',
+  ];
+  
+  for (const sel of selectors) {
+    const h1 = doc.querySelector(sel);
+    if (h1?.textContent?.trim()) {
+      const text = h1.textContent.trim();
+      // If it contains a number at the start, keep it; otherwise continue searching
+      if (/^\d+\./.test(text)) {
+        return text;
+      }
     }
   }
-
+  
+  // Fallback: try to extract from document title tag
   const titleTag = doc.querySelector('title')?.textContent?.trim();
   if (!titleTag) return undefined;
 
@@ -660,7 +693,7 @@ function extractTitleFromDoc(doc: Document): string | undefined {
     .replace(/\s*-\s*NeetCode.*$/i, '')
     .trim();
 
-  return title;
+  return title || undefined;
 }
 
 function extractDifficultyFromDoc(doc: Document): string | undefined {
