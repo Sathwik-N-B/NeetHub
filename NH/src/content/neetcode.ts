@@ -57,7 +57,7 @@ window.addEventListener('message', (event) => {
     return;
   }
 
-  void pushSubmission(payload, 'postMessage');
+  void pushSubmissionWithEnrichment(payload, 'postMessage');
 });
 
 function attachSubmitButtonListener() {
@@ -111,42 +111,49 @@ function startMonitoringForAcceptance() {
       
       // Wait a bit for page to fully update, then trigger push
       setTimeout(() => {
-        autoTriggerPush();
+        void autoTriggerPush();
       }, 1000);
     }
   }, 500);
 }
 
-function autoTriggerPush() {
+async function autoTriggerPush() {
   // Extract submission data from page
   const code = extractPageCode();
   if (!code) {
     warn('Cannot auto-push: no code found');
     return;
   }
-  
+
+  const rawSlug = extractPageSlug();
+  const slug = rawSlug ? rawSlug.toLowerCase().replace(/\s+/g, '-') : 'unknown';
+  const url = buildProblemUrl(slug);
+
   const submission: SubmissionPayload = {
     title: extractPageTitle() || 'Unknown Problem',
-    slug: (extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
+    slug,
     language: extractPageLanguage() || 'unknown',
     code,
     runtime: 'auto',
     memory: 'auto',
     timestamp: Date.now(),
-    url: window.location.href,
+    url,
+    problemNumber: extractPageNumber(),
+    difficulty: extractDifficulty(),
+    description: extractProblemDescription(),
   };
-  
-  // Store as last accepted submission
-  lastAcceptedSubmission = submission;
-  
+
   // Check for duplicates
   if (isRecent(submission)) {
     log('Auto-push skipped: duplicate submission');
     return;
   }
-  
-  log('Auto-triggering push for:', submission.title);
-  void pushSubmission(submission, 'auto-trigger', true);
+
+  const enrichedSubmission = await enrichSubmissionPayload(submission);
+  lastAcceptedSubmission = enrichedSubmission;
+
+  log('Auto-triggering push for:', enrichedSubmission.title);
+  void pushSubmission(enrichedSubmission, 'auto-trigger', true);
 }
 
 // NeetCode endpoints observed in DevTools
@@ -559,6 +566,206 @@ function extractPageSlug(): string | undefined {
   return match?.[1];
 }
 
+function buildProblemUrl(slug?: string): string | undefined {
+  if (!slug) return undefined;
+  return `https://neetcode.io/problems/${slug}/question`;
+}
+
+async function pushSubmissionWithEnrichment(
+  payload: SubmissionPayload,
+  source: string,
+  autoTriggered = false,
+) {
+  const enriched = await enrichSubmissionPayload(payload);
+  lastAcceptedSubmission = enriched;
+  return pushSubmission(enriched, source, autoTriggered);
+}
+
+async function enrichSubmissionPayload(payload: SubmissionPayload): Promise<SubmissionPayload> {
+  const rawSlug = payload.slug || extractPageSlug() || '';
+  const slug = rawSlug.toLowerCase().replace(/\s+/g, '-');
+  const url = payload.url || buildProblemUrl(slug);
+
+  let { title, difficulty, description, problemNumber } = payload;
+  if (description && isLikelySubmissionDescription(description)) {
+    description = undefined;
+  }
+
+  if (!title || !description || !difficulty || !problemNumber) {
+    const info = await fetchProblemInfo(slug);
+    title = title || info.title;
+    difficulty = difficulty || info.difficulty;
+    description = description || info.description;
+    problemNumber = problemNumber || info.problemNumber;
+  }
+
+  return {
+    ...payload,
+    slug: slug || payload.slug,
+    url,
+    title: title || payload.title,
+    difficulty,
+    description,
+    problemNumber,
+  };
+}
+
+function isLikelySubmissionDescription(description: string): boolean {
+  const text = description.toLowerCase();
+  return text.includes('submission') || text.includes('submitted at') || text.includes('test cases');
+}
+
+async function fetchProblemInfo(
+  slug?: string,
+): Promise<{ title?: string; difficulty?: string; description?: string; problemNumber?: string }> {
+  if (!slug) return {};
+
+  const url = buildProblemUrl(slug);
+  if (!url) return {};
+
+  try {
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) return {};
+
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    return {
+      title: extractTitleFromDoc(doc),
+      difficulty: extractDifficultyFromDoc(doc),
+      description: extractDescriptionFromDoc(doc),
+      problemNumber: extractNumberFromTitle(extractTitleFromDoc(doc)),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function extractTitleFromDoc(doc: Document): string | undefined {
+  // Try to find the title with problem number (like "1. Two Sum")
+  const h1 = doc.querySelector('h1, .problem-title, [class*="title"]');
+  if (h1?.textContent?.trim()) {
+    const text = h1.textContent.trim();
+    // If it contains a number at the start, keep it; otherwise add context
+    if (/^\d+\./.test(text)) {
+      return text;
+    }
+  }
+
+  const titleTag = doc.querySelector('title')?.textContent?.trim();
+  if (!titleTag) return undefined;
+
+  let title = titleTag
+    .replace(/\s*\|\s*NeetCode.*$/i, '')
+    .replace(/\s*-\s*NeetCode.*$/i, '')
+    .trim();
+
+  return title;
+}
+
+function extractDifficultyFromDoc(doc: Document): string | undefined {
+  const difficulty = doc.querySelector('.difficulty, [data-difficulty]')?.textContent?.trim();
+  if (difficulty) return difficulty;
+
+  const text = doc.body?.innerText || '';
+  if (text.includes('Easy')) return 'Easy';
+  if (text.includes('Medium')) return 'Medium';
+  if (text.includes('Hard')) return 'Hard';
+  return undefined;
+}
+
+function extractDescriptionFromDoc(doc: Document): string | undefined {
+  const selectors = [
+    'app-article',  // Main problem content container on NeetCode
+    '.question-tab .question-content',
+    '.question-tab .problem-content',
+    '.question-tab .prompt',
+    'app-prompt',
+    '.question-tab',
+  ];
+
+  for (const selector of selectors) {
+    let el = doc.querySelector(selector);
+    if (!el) continue;
+    
+    const text = el.textContent?.toLowerCase() ?? '';
+    if (text.length < 100) continue;
+    if (text.includes('submission') && text.includes('accepted')) continue;
+    
+    let html = el.innerHTML.trim();
+    if (!html || html.length < 100) continue;
+    
+    return html;
+  }
+
+  return undefined;
+}
+
+function extractNumberFromTitle(title?: string): string | undefined {
+  if (!title) return undefined;
+  const match = title.match(/^(\d+)[.\-\s]/);
+  return match?.[1];
+}
+
+function extractPageNumber(): string | undefined {
+  // Try to extract problem number from the title
+  const title = extractPageTitle();
+  if (!title) return undefined;
+  
+  // Match patterns like "49. Group Anagrams" or "49 - Group Anagrams"
+  const match = title.match(/^(\d+)[.\-\s]/);
+  return match?.[1];
+}
+
+function extractDifficulty(): string | undefined {
+  // Try common selectors for difficulty badge/tag
+  const selectors = [
+    '[class*="difficulty"]',
+    '[class*="Difficulty"]',
+    '[data-difficulty]',
+    '.badge',
+  ];
+
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    const text = el?.textContent?.trim().toLowerCase();
+    if (text === 'easy' || text === 'medium' || text === 'hard') {
+      return text.charAt(0).toUpperCase() + text.slice(1);
+    }
+  }
+
+  // Fallback: search for difficulty in page text
+  const bodyText = document.body?.innerText || '';
+  if (bodyText.match(/\bEasy\b/)) return 'Easy';
+  if (bodyText.match(/\bMedium\b/)) return 'Medium';
+  if (bodyText.match(/\bHard\b/)) return 'Hard';
+
+  return undefined;
+}
+
+function extractProblemDescription(): string | undefined {
+  // Try to extract the full problem description HTML from current page
+  const selectors = [
+    'app-article',  // Main problem content container on NeetCode
+    '[class*="problem-description"]',
+    '[class*="question-content"]',
+    '[class*="problemDescription"]',
+    '.description',
+    '[data-cy="question-detail-main-tabs"]',
+    'app-prompt',
+    '.question-tab',
+  ];
+
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el && el.innerHTML && el.innerHTML.length > 100) {
+      return el.innerHTML;
+    }
+  }
+
+  return undefined;
+}
+
 function isPageShowingAcceptedSubmission(): boolean {
   // Check for CURRENT submission result showing "Accepted" - ONLY after submission
   // Similar to LeetHub's approach, check for success/accepted status
@@ -755,11 +962,8 @@ function handleCandidate(data: unknown, source: string, requestData?: unknown) {
     return;
   }
 
-  // Store last accepted submission for manual push button
-  lastAcceptedSubmission = payload;
-
   log('NeetHub: accepted submission detected, auto-pushing...');
-  void pushSubmission(payload, source, true); // true = auto-triggered
+  void pushSubmissionWithEnrichment(payload, source, true); // true = auto-triggered
 }
 
 async function pushSubmission(payload: SubmissionPayload, source: string, autoTriggered = false) {
@@ -841,16 +1045,20 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
       const memory = getMetric(singleResult, ['memory']);
       const ts = getTimestamp(singleResult, ['finished_at', 'created_at']);
 
+      const slug = (problemId || extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-');
       return {
         payload: {
           title: extractPageTitle() || problemId || 'Unknown Problem',
-          slug: (problemId || extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
+          slug,
           language: lang,
           code,
           runtime: runtime ?? 'n/a',
           memory: memory ?? 'n/a',
           timestamp: ts ?? Date.now(),
-          url: window.location.href,
+          url: buildProblemUrl(slug),
+          problemNumber: extractPageNumber(),
+          difficulty: extractDifficulty(),
+          description: extractProblemDescription(),
         },
         isAccepted: true,
       };
@@ -878,16 +1086,20 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
       const finalLang = lang ?? extractPageLanguage() ?? 'unknown';
 
       if (finalCode) {
+        const slug = (problemId || extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-');
         return {
           payload: {
             title: extractPageTitle() || problemId || 'Unknown Problem',
-            slug: (problemId || extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-'),
+            slug,
             language: finalLang,
             code: finalCode,
             runtime: runtime ?? 'n/a',
             memory: memory ?? 'n/a',
             timestamp: ts ?? Date.now(),
-            url: window.location.href,
+            url: buildProblemUrl(slug),
+            problemNumber: extractPageNumber(),
+            difficulty: extractDifficulty(),
+            description: extractProblemDescription(),
           },
           isAccepted: true,
         };
@@ -921,16 +1133,20 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
     const cTs = getTimestamp(candidate, ['timestamp', 'createdAt', 'submittedAt']);
 
     if (cCode && (cTitle || cSlug) && cLang && foundAccepted) {
+      const slug = (cSlug ?? cTitle ?? 'unknown').toLowerCase().replace(/\s+/g, '-');
       return {
         payload: {
           title: cTitle ?? cSlug ?? 'Unknown Problem',
-          slug: (cSlug ?? cTitle ?? 'unknown').toLowerCase().replace(/\s+/g, '-'),
+          slug,
           language: cLang,
           code: cCode,
           runtime: cRuntime ?? 'n/a',
           memory: cMemory ?? 'n/a',
           timestamp: cTs ?? Date.now(),
-          url: window.location.href,
+          url: buildProblemUrl(slug),
+          problemNumber: extractPageNumber(),
+          difficulty: extractDifficulty(),
+          description: extractProblemDescription(),
         },
         isAccepted: true,
       };

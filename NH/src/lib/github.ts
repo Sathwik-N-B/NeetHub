@@ -116,7 +116,10 @@ export type SubmissionPayload = {
   runtime: string;
   memory: string;
   timestamp: number;
-      url?: string;
+  url?: string;
+  problemNumber?: string;
+  difficulty?: string;
+  description?: string;
 };
 
 export async function commitSubmission(token: string, repo: RepoConfig, submission: SubmissionPayload): Promise<void> {
@@ -130,7 +133,7 @@ export async function commitSubmission(token: string, repo: RepoConfig, submissi
     repo,
     readmePath,
     toBase64(formatReadme(submission)),
-    `Update README: ${submission.title}`,
+    `Create README - NeetHub`,
   );
 
   await commitFile(
@@ -166,17 +169,62 @@ function formatCodeFile(submission: SubmissionPayload): string {
 }
 
 function formatReadme(submission: SubmissionPayload): string {
-  const submitted = new Date(submission.timestamp).toISOString();
-  const urlLine = submission.url ? `- URL: ${submission.url}\n` : '';
-  return `# ${submission.title}\n\n${urlLine}- Language: ${submission.language}\n- Runtime: ${submission.runtime}\n- Memory: ${submission.memory}\n- Submitted: ${submitted}\n`;
+  const questionUrl = submission.url || '';
+  const title = submission.title || 'Problem';
+  const difficulty = submission.difficulty || 'Unknown';
+  let description = submission.description || '';
+
+  // Clean description of hints and metadata
+  description = cleanDescription(description);
+
+  // Match LeetCode format: title, difficulty, and description
+  return `<h2><a href="${questionUrl}">${title}</a></h2><h3>${difficulty}</h3><hr>${description}`;
+}
+
+function cleanDescription(html: string): string {
+  if (!html) return '';
+  
+  let cleaned = html;
+  
+  // Remove details elements with hint or company tags accordion classes
+  cleaned = cleaned.replace(/<details[^>]*class="[^"]*(?:hint|company-tags)-accordion[^"]*"[^>]*>[\s\S]*?<\/details>/gi, '');
+  
+  // Remove br tags that are used as separators (multiple consecutive brs)
+  cleaned = cleaned.replace(/<br\s*\/?>\s*<br\s*\/?>/gi, '');
+  
+  // Remove standalone Company Tags, Hints, Topics text sections at the end
+  cleaned = cleaned.replace(/(?:<div[^>]*>)*\s*(?:Company\s+)?Tags[\s\S]*$/gi, '');
+  cleaned = cleaned.replace(/(?:<div[^>]*>)*\s*Recommended[\s\S]*$/gi, '');
+  cleaned = cleaned.replace(/(?:<div[^>]*>)*\s*Hint\s+\d+[\s\S]*$/gi, '');
+  cleaned = cleaned.replace(/(?:<div[^>]*>)*\s*Topics[\s\S]*$/gi, '');
+  
+  // Remove tab elements and custom hint components
+  cleaned = cleaned.replace(/<[a-z]+-tabs[^>]*>[\s\S]*?<\/[a-z]+-tabs>/gi, '');
+  cleaned = cleaned.replace(/<app-hint[^>]*>[\s\S]*?<\/app-hint>/gi, '');
+  
+  // Remove hidden buttons and elements
+  cleaned = cleaned.replace(/<button[^>]*style="[^"]*display:\s*none[^"]*"[^>]*>[\s\S]*?<\/button>/gi, '');
+  cleaned = cleaned.replace(/<[a-z]+-[^>]*style="[^"]*display:\s*none[^"]*"[^>]*>[\s\S]*?<\/[a-z]+-[^>]*>/gi, '');
+  
+  cleaned = cleaned.trim();
+  
+  return cleaned;
 }
 
 function buildFolder(submission: SubmissionPayload): string {
-  return `${BASE_PATH}/${submission.slug}`;
+  // Add leading zeros to problem number like LeetCode: 0049-problem-name
+  const number = submission.problemNumber || '';
+  const paddedNumber = number ? number.padStart(4, '0') : '';
+  const folderName = paddedNumber ? `${paddedNumber}-${submission.slug}` : submission.slug;
+  return `${BASE_PATH}/${folderName}`;
 }
 
 function buildCodePath(submission: SubmissionPayload): string {
-  const filename = `${submission.slug}.${extensionFor(submission.language)}`;
+  // Add leading zeros to filename like LeetCode: 0049-problem-name.java
+  const number = submission.problemNumber || '';
+  const paddedNumber = number ? number.padStart(4, '0') : '';
+  const baseName = paddedNumber ? `${paddedNumber}-${submission.slug}` : submission.slug;
+  const filename = `${baseName}.${extensionFor(submission.language)}`;
   return `${buildFolder(submission)}/${filename}`;
 }
 
