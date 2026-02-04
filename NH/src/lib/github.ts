@@ -240,12 +240,18 @@ function buildStatsMessage(submission: SubmissionPayload): string {
 
 function extensionFor(language: string): string {
   const normalized = language.toLowerCase();
-  if (normalized.includes('python')) return 'py';
-  if (normalized.includes('java')) return 'java';
-  if (normalized.includes('cpp')) return 'cpp';
-  if (normalized.includes('javascript') || normalized.includes('node')) return 'js';
-  if (normalized.includes('typescript')) return 'ts';
-  if (normalized.includes('c#')) return 'cs';
+  if (normalized.includes('python') || normalized === 'py') return 'py';
+  if (normalized.includes('java') || normalized === 'java') return 'java';
+  if (normalized.includes('cpp') || normalized === 'c++' || normalized === 'cpp') return 'cpp';
+  if (normalized.includes('javascript') || normalized.includes('node') || normalized === 'js') return 'js';
+  if (normalized.includes('typescript') || normalized === 'ts') return 'ts';
+  if (normalized.includes('c#') || normalized === 'csharp' || normalized === 'cs') return 'cs';
+  if (normalized.includes('go') || normalized === 'golang') return 'go';
+  if (normalized.includes('ruby') || normalized === 'rb') return 'rb';
+  if (normalized.includes('swift')) return 'swift';
+  if (normalized.includes('kotlin') || normalized === 'kt') return 'kt';
+  if (normalized.includes('rust') || normalized === 'rs') return 'rs';
+  if (normalized === 'c') return 'c';
   return 'txt';
 }
 
