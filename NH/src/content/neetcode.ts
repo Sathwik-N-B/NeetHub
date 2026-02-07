@@ -10,6 +10,19 @@ function warn(...args: unknown[]) {
   console.warn('[NeetHub]', ...args);
 }
 
+// Helper to check nested properties in objects
+function hasProperty(obj: unknown, path: string[]): boolean {
+  if (!obj || typeof obj !== 'object') return false;
+  let current: any = obj;
+  for (const key of path) {
+    if (!current || typeof current !== 'object' || !(key in current)) {
+      return false;
+    }
+    current = current[key];
+  }
+  return current !== undefined && current !== null;
+}
+
 // Track last submission for retry - MUST be declared before any function that uses them
 let recentKeys = new Set<string>();
 const RECENT_TTL_MS = 10 * 60 * 1000; // dedupe window
@@ -30,10 +43,6 @@ function initializeExtension() {
     // Listen for Submit button clicks
     attachSubmitButtonListener();
 
-    // Auto-capture: hook fetch/XHR to detect submission responses
-    patchFetch();
-    patchXhr();
-
     log('NeetHub initialized');
   } catch (err) {
     warn('NeetHub initialization failed', err);
@@ -50,7 +59,9 @@ if (document.body) {
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
   const data = event.data;
-  if (!data || data.source !== 'neetcode' || data.type !== 'submission') return;
+  if (!data || data.source !== 'neetcode') return;
+
+  if (data.type !== 'submission') return;
 
   const payload = data.payload as SubmissionPayload;
   if (!payload?.code) {
@@ -119,9 +130,6 @@ function startMonitoringForAcceptance() {
 }
 
 async function autoTriggerPush() {
-  log('>>> AUTO-TRIGGER START <<<');
-  log('lastRequestLanguage at start:', lastRequestLanguage);
-  
   // Extract submission data from page
   const code = extractPageCode();
   if (!code) {
@@ -129,14 +137,18 @@ async function autoTriggerPush() {
     return;
   }
 
+  log('DEBUG: Code extracted, length:', code.length, 'first 100 chars:', code.substring(0, 100));
+
   const rawSlug = extractPageSlug();
   const slug = rawSlug ? rawSlug.toLowerCase().replace(/\s+/g, '-') : 'unknown';
   const url = buildProblemUrl(slug);
 
   // Use captured language from request, otherwise fallback to page extraction or code detection
-  let language = lastRequestLanguage || extractPageLanguage() || detectLanguageFromCode(code) || 'unknown';
+  const pageLang = extractPageLanguage();
+  const codeLang = detectLanguageFromCode(code);
+  
+  let language = lastRequestLanguage || pageLang || codeLang || 'unknown';
   log('NeetHub: Auto-trigger using language:', language);
-  log('>>> AUTO-TRIGGER END <<<');
 
   const submission: SubmissionPayload = {
     title: extractPageTitle() || 'Unknown Problem',
@@ -855,11 +867,66 @@ function isPageShowingAcceptedSubmission(): boolean {
   return false;
 }
 
-function extractPageLanguage(): string | undefined {
-  // Monaco editor language id (most reliable when available)
+function getMonacoModel(): any | undefined {
   try {
     const model = (window as any).monaco?.editor?.getModels?.()[0];
+    if (model) {
+      log('DEBUG: Found Monaco model in main window');
+      return model;
+    }
+  } catch {}
+
+  try {
+    const frames = Array.from(document.querySelectorAll('iframe')) as HTMLIFrameElement[];
+    log('DEBUG: Checking', frames.length, 'iframes for Monaco');
+    for (const frame of frames) {
+      try {
+        const win = frame.contentWindow as any;
+        const model = win?.monaco?.editor?.getModels?.()[0];
+        if (model) {
+          log('DEBUG: Found Monaco model in iframe');
+          return model;
+        }
+      } catch {
+        // ignore cross-origin frames
+      }
+    }
+  } catch {}
+
+  log('DEBUG: No Monaco model found');
+  return undefined;
+}
+
+function extractPageLanguage(): string | undefined {
+  // Try to access NeetCode's internal state (Angular app data)
+  try {
+    const win = window as any;
+    // Check common paths where Angular apps store state
+    if (win.__neetcode_state__?.language) {
+      return win.__neetcode_state__.language.toLowerCase();
+    }
+    if (win.neetcode?.currentLanguage) {
+      return win.neetcode.currentLanguage.toLowerCase();
+    }
+    // Check localStorage for language preference
+    const storedLang = localStorage.getItem('selectedLanguage') || 
+                      localStorage.getItem('language') ||
+                      localStorage.getItem('neetcode-language');
+    if (storedLang) {
+      const lang = storedLang.toLowerCase().replace(/['"]/g, '');
+      if (lang === 'python' || lang === 'python3') return 'python';
+      if (lang === 'java') return 'java';
+      if (lang === 'cpp' || lang === 'c++') return 'cpp';
+      if (lang === 'javascript' || lang === 'js') return 'javascript';
+      if (lang === 'typescript' || lang === 'ts') return 'typescript';
+    }
+  } catch {}
+
+  // Monaco editor language id (most reliable when available)
+  try {
+    const model = getMonacoModel();
     const langId = model?.getLanguageId?.() ?? model?.getModeId?.();
+    log('DEBUG: Monaco langId:', langId);
     if (typeof langId === 'string' && langId.length > 0) {
       const id = langId.toLowerCase();
       if (id === 'java') return 'java';
@@ -878,6 +945,12 @@ function extractPageLanguage(): string | undefined {
 
   // Try common elements showing selected language
   const candidates = [
+    // NeetCode-specific selectors (from DOM inspection)
+    'button.editor-language-btn', // The language dropdown button - MOST RELIABLE
+    '.dropdown-item.selected-item', // Selected dropdown item
+    'a.dropdown-item.selected-item', // More specific selected item
+    '.toggle-btn.editor-language-btn', // Alternative button selector
+    // Generic selectors
     '.language-select',
     '[data-selected-language]',
     '[aria-label*="language"]',
@@ -885,21 +958,33 @@ function extractPageLanguage(): string | undefined {
     'button[aria-label*="language"]',
     '[class*="language-picker"]',
     '[class*="lang-select"]',
+    'button.is-active', // Active language button
+    '.dropdown-trigger button', // Dropdown button
+    '.select select', // Select element in Bulma CSS
+    '[class*="lang"].is-active', // Active language tab
+    '.navbar-btn.is-active', // Active navbar button
   ];
   for (const sel of candidates) {
     const el = document.querySelector(sel);
+    if (!el) continue;
+    
     const text = el?.textContent?.toLowerCase() ?? '';
-    if (text.includes('java') && !text.includes('javascript')) return 'java';
-    if (text.includes('python')) return 'python';
-    if (text.includes('c++')) return 'cpp';
-    if (text.includes('javascript')) return 'javascript';
-    if (text.includes('typescript')) return 'typescript';
-    if (text.includes('c#')) return 'csharp';
-    if (text.includes('go')) return 'go';
-    if (text.includes('ruby')) return 'ruby';
-    if (text.includes('swift')) return 'swift';
-    if (text.includes('kotlin')) return 'kotlin';
-    if (text.includes('rust')) return 'rust';
+    const value = (el as HTMLSelectElement)?.value?.toLowerCase() ?? '';
+    const ariaLabel = el?.getAttribute('aria-label')?.toLowerCase() ?? '';
+    const name = el?.getAttribute('name')?.toLowerCase() ?? '';
+    const combined = `${text} ${value} ${ariaLabel} ${name}`.trim();
+    
+    if (combined.includes('java') && !combined.includes('javascript')) return 'java';
+    if (combined.includes('python')) return 'python';
+    if (combined.includes('c++')) return 'cpp';
+    if (combined.includes('javascript')) return 'javascript';
+    if (combined.includes('typescript')) return 'typescript';
+    if (combined.includes('c#') || combined.includes('csharp')) return 'csharp';
+    if (combined.includes('kotlin')) return 'kotlin';
+    if (combined.includes('swift')) return 'swift';
+    if (combined.includes('go') && !combined.includes('golang')) return 'go';
+    if (combined.includes('ruby')) return 'ruby';
+    if (combined.includes('rust')) return 'rust';
   }
 
   // Broad fallback: inspect small set of languages in body text
@@ -916,20 +1001,41 @@ function extractPageLanguage(): string | undefined {
 function detectLanguageFromCode(code: string): string {
   if (!code) return 'unknown';
   
-  const firstLines = code.substring(0, 500).toLowerCase();
+  // Strip leading line numbers (like "123456789class Solution")
+  let cleaned = code.replace(/^\d+/, '').trim();
+  const firstLines = cleaned.substring(0, 500).toLowerCase();
   
-  // Java detection
+  // Java detection - look for Java-specific keywords and syntax
   if (firstLines.includes('public class') || firstLines.includes('private class') || 
       firstLines.includes('class solution') || firstLines.includes('import java.') ||
       firstLines.includes('arraylist<') || firstLines.includes('hashmap<') ||
-      firstLines.includes('public static void')) {
+      firstLines.includes('public static void') ||
+      // Java array syntax: int[], char[], String[], boolean[], etc.
+      /\b(int|char|boolean|byte|short|long|float|double|string)\[\]/.test(firstLines) ||
+      // Java primitive types with methods: public int, public boolean, etc.
+      /\bpublic\s+(int|boolean|void|char|string)/.test(firstLines) ||
+      // imports or package statements
+      firstLines.includes('package ') && firstLines.includes(';')) {
     return 'java';
   }
   
-  // Python detection
+  // Python detection - expanded patterns
   if (firstLines.includes('def ') || (firstLines.includes('import ') && firstLines.includes(':')) ||
       firstLines.includes('self.') || firstLines.includes('self,') ||
-      firstLines.includes('class solution:') || firstLines.includes('list[')) {
+      firstLines.includes('class solution:') || firstLines.includes('list[') ||
+      // Python-specific methods and syntax
+      firstLines.includes('.items()') ||  // dict.items()
+      firstLines.includes('.append(') ||  // list.append()
+      firstLines.includes('.get(') ||     // dict.get()
+      firstLines.includes('range(') ||    // range() builtin
+      firstLines.includes('len(') ||      // len() builtin
+      firstLines.includes('enumerate(') || // enumerate() builtin
+      /\bfor\s+\w+\s+(,\s*\w+\s+)?in\s+/.test(firstLines) || // for x in ... or for k, v in ...
+      /->.*list\[/.test(firstLines) ||    // -> List[...] return type
+      firstLines.includes(': list[') ||   // param: List[...]
+      firstLines.includes(': dict[') ||   // param: Dict[...]
+      firstLines.includes('none:') ||     // -> None:
+      (firstLines.includes('true') && firstLines.includes('false'))) { // Python True/False
     return 'python';
   }
   
@@ -964,12 +1070,33 @@ function detectLanguageFromCode(code: string): string {
 }
 
 function extractPageCode(): string | undefined {
-  // Try common code editor selectors
+  // Try reading Monaco model directly if available
+  try {
+    const code = getMonacoModel()?.getValue?.();
+    if (typeof code === 'string' && code.trim().length > 10) return code.trim();
+  } catch {}
+
+  // Prefer textarea value if present (some editors store code here)
+  try {
+    const textareas = Array.from(document.querySelectorAll('textarea')) as HTMLTextAreaElement[];
+    let best: string | undefined;
+    for (const ta of textareas) {
+      const value = ta.value?.trim();
+      if (value && value.length > 10 && (!best || value.length > best.length)) {
+        best = value;
+      }
+    }
+    if (best) return best;
+  } catch {}
+
+  // Try common code containers as a last resort
   const selectors = [
     '.monaco-editor',
-    '[class*="editor"]',
-    'textarea',
+    '.editor',
+    '.code-editor',
+    'pre code',
     'pre',
+    'code',
   ];
 
   for (const sel of selectors) {
@@ -979,12 +1106,6 @@ function extractPageCode(): string | undefined {
       if (text && text.length > 10) return text;
     }
   }
-
-  // Fallback: try reading Monaco model via injected script
-  try {
-    const code = (window as any).monaco?.editor?.getModels?.()[0]?.getValue?.();
-    if (typeof code === 'string' && code.trim().length > 10) return code.trim();
-  } catch {}
 
   return undefined;
 }
@@ -996,13 +1117,17 @@ function patchFetch() {
     const init = (args[1] as RequestInit | undefined);
     const method = init?.method || 'GET';
     
-    log(`[Fetch] ${method} ${url?.substring(0, 80)}`);
+    // Log body for POST/PUT/PATCH requests
+    let bodyStr = '';
+    if (init?.body && (init.method === 'POST' || init.method === 'PUT' || init.method === 'PATCH')) {
+      try {
+        bodyStr = typeof init.body === 'string' ? init.body : JSON.stringify(init.body);
+        if (bodyStr.length > 200) bodyStr = bodyStr.substring(0, 200) + '...';
+      } catch {}
+    }
     
+    log(`DEBUG: FETCH ${method} ${url}${bodyStr ? ' BODY: ' + bodyStr : ''}`);
     const response = await original(...args);
-    
-    // Log response status
-    log(`[Fetch Response] Status ${response.status} for ${url?.substring(0, 80)}`);
-    
     tryCaptureFromResponse(response.clone(), url, init);
     return response;
   };
@@ -1017,16 +1142,21 @@ function patchXhr() {
     open(method: string, url: string | URL, async?: boolean, username?: string) {
       this._url = typeof url === 'string' ? url : url.toString();
       const isAsync = async ?? true;
-      log(`[XHR Open] ${method} ${this._url.substring(0, 80)}`);
       return super.open(method, url as any, isAsync, username);
     }
 
     send(body?: Document | BodyInit | null) {
+      let bodyStr = '';
+      if (typeof body === 'string') {
+        bodyStr = body.length > 200 ? body.substring(0, 200) + '...' : body;
+      }
+      log(`DEBUG: XHR send to ${this._url}${bodyStr ? ' BODY: ' + bodyStr : ''}`);
       // Capture request body for pairing with response
       try {
         if (typeof body === 'string') {
           try {
             this._reqData = JSON.parse(body);
+            log('DEBUG: XHR request body:', this._reqData);
           } catch {
             this._reqData = body;
           }
@@ -1035,10 +1165,7 @@ function patchXhr() {
         }
       } catch {}
 
-      log(`[XHR Send] ${this._url.substring(0, 80)}`);
-
       this.addEventListener('loadend', () => {
-        log(`[XHR Response] ${this.status} for ${this._url.substring(0, 80)}`);
         if (!this.responseType || this.responseType === 'text') {
           tryCaptureFromText(this.responseText, this._url, this._reqData);
         }
@@ -1050,6 +1177,11 @@ function patchXhr() {
   window.XMLHttpRequest = WrappedXHR as typeof XMLHttpRequest;
 }
 
+// Apply patches IMMEDIATELY at module level, before NeetCode's app loads
+patchFetch();
+patchXhr();
+log('NeetHub: Network patches applied');
+
 async function tryCaptureFromResponse(response: Response, url?: string, init?: RequestInit) {
   log('NeetHub: Fetch intercepted, URL:', url?.substring(0, 100));
   
@@ -1057,6 +1189,7 @@ async function tryCaptureFromResponse(response: Response, url?: string, init?: R
   if (init?.body) {
     try {
       requestBody = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+      log('DEBUG: Parsed request body:', requestBody);
     } catch {}
   }
   
@@ -1067,6 +1200,8 @@ async function tryCaptureFromResponse(response: Response, url?: string, init?: R
      hasProperty(requestBody, ['data', 'rawCode']) ||
      hasProperty(requestBody, ['lang']) ||
      hasProperty(requestBody, ['rawCode']));
+  
+  log('DEBUG: isSubmissionUrl:', isSubmissionUrl, 'isSubmissionBody:', isSubmissionBody);
   
   if (!isSubmissionUrl && !isSubmissionBody) {
     log('NeetHub: Not a submission request (URL or body), skipping');
@@ -1116,7 +1251,6 @@ function tryCaptureFromText(text: string, url?: string, requestData?: unknown) {
 }
 
 function handleCandidate(data: unknown, source: string, requestData?: unknown) {
-  log('>>> handleCandidate CALLED <<<');
   log('NeetHub: handleCandidate called with requestData:', requestData ? 'YES' : 'NO');
   const result = extractSubmission(data, requestData);
   if (!result) {

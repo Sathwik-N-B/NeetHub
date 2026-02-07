@@ -18,7 +18,7 @@
     {
       "matches": ["https://neetcode.io/*"],
       "js": ["content-neetcode.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ]
 }
