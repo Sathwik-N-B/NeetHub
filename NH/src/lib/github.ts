@@ -162,7 +162,7 @@ async function getExistingFileSha(token: string, repo: RepoConfig, path: string)
   throw new Error(`Failed to check existing file: ${response.status} ${text || ''}`.trim());
 }
 
-const BASE_PATH = 'NeetCode';
+const BASE_PATH = '';
 
 function formatCodeFile(submission: SubmissionPayload): string {
   return `// NeetCode: ${submission.title}\n// Runtime: ${submission.runtime}, Memory: ${submission.memory}\n// Submitted: ${new Date(submission.timestamp).toISOString()}\n\n${submission.code}\n`;
@@ -216,7 +216,7 @@ function buildFolder(submission: SubmissionPayload): string {
   const number = submission.problemNumber || '';
   const paddedNumber = number ? number.padStart(4, '0') : '';
   const folderName = paddedNumber ? `${paddedNumber}-${submission.slug}` : submission.slug;
-  return `${BASE_PATH}/${folderName}`;
+  return BASE_PATH ? `${BASE_PATH}/${folderName}` : folderName;
 }
 
 function buildCodePath(submission: SubmissionPayload): string {

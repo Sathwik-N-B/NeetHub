@@ -148,13 +148,15 @@ async function autoTriggerPush() {
   let language = lastRequestLanguage || pageLang || codeLang || 'unknown';
   log('NeetHub: Auto-trigger using language:', language);
 
+  const pageMetrics = extractRuntimeMemoryFromPage();
+
   const submission: SubmissionPayload = {
     title: extractPageTitle() || 'Unknown Problem',
     slug,
     language,
     code,
-    runtime: 'auto',
-    memory: 'auto',
+    runtime: pageMetrics.runtime ?? 'auto',
+    memory: pageMetrics.memory ?? 'auto',
     timestamp: Date.now(),
     url,
     problemNumber: extractPageNumber(),
@@ -818,6 +820,120 @@ function extractProblemDescription(): string | undefined {
   return undefined;
 }
 
+// Network response storage for metrics captured from API
+let capturedMetricsFromApi: { runtime?: string; memory?: string } = {};
+
+// Intercept fetch responses to capture submission metrics from API
+function initNetworkInterception() {
+  const originalFetch = window.fetch;
+  
+  window.fetch = function(...args: any[]) {
+    const fetchPromise = originalFetch.apply(this, args);
+    
+    // Non-blocking response parsing
+    fetchPromise
+      .then(response => {
+        try {
+          // Check if this might be a submission result endpoint
+          const url = args[0]?.toString?.() ?? '';
+          if (url.includes('submission') || url.includes('submit') || url.includes('graphql')) {
+            // Clone response to read without consuming it
+            const cloned = response.clone();
+            cloned.json().then(data => {
+              // Extract metrics from various possible response shapes
+              const runtime = 
+                data?.data?.submissionDetail?.runtime ??
+                data?.runtime ??
+                data?.stats?.runtime;
+              const memory = 
+                data?.data?.submissionDetail?.memory ??
+                data?.memory ??
+                data?.stats?.memory;
+              
+              if (runtime || memory) {
+                capturedMetricsFromApi = { runtime, memory };
+                log('Captured metrics from API:', capturedMetricsFromApi);
+              }
+            }).catch(() => {
+              // Silently ignore JSON parse errors
+            });
+          }
+        } catch {
+          // Silently ignore errors
+        }
+        return response;
+      })
+      .catch(() => {
+        // Silently ignore fetch errors
+      });
+    
+    return fetchPromise;
+  } as any;
+}
+
+// Initialize network interception on page load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initNetworkInterception);
+} else {
+  initNetworkInterception();
+}
+
+function extractRuntimeMemoryFromText(text: string): { runtime?: string; memory?: string } {
+  if (!text) return {};
+  
+  // Match patterns like "Time: 61ms" or "Runtime: 44 ms", capture just the value
+  // Pattern: number (optional decimal) + optional space + unit (ms, MB, GB, etc)
+  const runtimeMatch = text.match(
+    /(?:time|runtime)\s*:\s*(\d+(?:\.\d+)?)\s*(?:ms|s)?/i
+  );
+  
+  // Match patterns like "Memory: 63.4 MB" or "Space: 73.2 MB"
+  const memoryMatch = text.match(
+    /(?:memory|space)\s*:\s*(\d+(?:\.\d+)?)\s*(?:MB|GB|KB)?/i
+  );
+  
+  return {
+    runtime: runtimeMatch?.[1] ? `${runtimeMatch[1]}ms` : undefined,
+    memory: memoryMatch?.[1] ? `${memoryMatch[1]} MB` : undefined,
+  };
+}
+
+function extractRuntimeMemoryFromPage(): { runtime?: string; memory?: string } {
+  // First priority: API-captured metrics
+  if (capturedMetricsFromApi.runtime || capturedMetricsFromApi.memory) {
+    log('Using metrics from API:', capturedMetricsFromApi);
+    return capturedMetricsFromApi;
+  }
+
+  // Second priority: DOM-displayed metrics
+  const selectors = [
+    '[class*="result"]',
+    '[class*="submission"]',
+    '[class*="status"]',
+    '[class*="output"]',
+    '.editor-toolbar',
+    '.notification',
+    '.toast',
+    '.modal',
+  ];
+
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    const text = el?.textContent?.trim() ?? '';
+    if (!text) continue;
+    const metrics = extractRuntimeMemoryFromText(text);
+    if (metrics.runtime || metrics.memory) {
+      log('Found metrics in DOM:', metrics);
+      return metrics;
+    }
+  }
+
+  // Final fallback: scan full page text
+  const bodyText = document.body?.innerText ?? '';
+  log('Scanning full page text for metrics');
+  return extractRuntimeMemoryFromText(bodyText);
+}
+
 function isPageShowingAcceptedSubmission(): boolean {
   // Check for CURRENT submission result showing "Accepted" - ONLY after submission
   // Similar to LeetHub's approach, check for success/accepted status
@@ -1370,6 +1486,7 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
       const runtime = getMetric(singleResult, ['time', 'wall_time']);
       const memory = getMetric(singleResult, ['memory']);
       const ts = getTimestamp(singleResult, ['finished_at', 'created_at']);
+      const pageMetrics = extractRuntimeMemoryFromPage();
 
       const slug = (problemId || extractPageSlug() || 'unknown').toLowerCase().replace(/\s+/g, '-');
       
@@ -1381,8 +1498,8 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
           slug,
           language: finalLang,
           code,
-          runtime: runtime ?? 'n/a',
-          memory: memory ?? 'n/a',
+          runtime: runtime ?? pageMetrics.runtime ?? 'n/a',
+          memory: memory ?? pageMetrics.memory ?? 'n/a',
           timestamp: ts ?? Date.now(),
           url: buildProblemUrl(slug),
           problemNumber: extractPageNumber(),
@@ -1410,6 +1527,7 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
       const runtime = getMetric(acceptedItem, ['time', 'wall_time']);
       const memory = getMetric(acceptedItem, ['memory']);
       const ts = getTimestamp(acceptedItem, ['finished_at', 'created_at']);
+      const pageMetrics = extractRuntimeMemoryFromPage();
 
       const finalCode = code ?? extractPageCode();
       let finalLang = lang ?? extractPageLanguage();
@@ -1434,8 +1552,8 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
             slug,
             language: finalLang,
             code: finalCode,
-            runtime: runtime ?? 'n/a',
-            memory: memory ?? 'n/a',
+            runtime: runtime ?? pageMetrics.runtime ?? 'n/a',
+            memory: memory ?? pageMetrics.memory ?? 'n/a',
             timestamp: ts ?? Date.now(),
             url: buildProblemUrl(slug),
             problemNumber: extractPageNumber(),
