@@ -1070,6 +1070,30 @@ function extractPageCode(): string | undefined {
     if (typeof code === 'string' && code.trim().length > 10) return code.trim();
   } catch {}
 
+  // Try reading Monaco DOM lines when model access is blocked
+  try {
+    const viewLines = Array.from(document.querySelectorAll('.monaco-editor .view-lines .view-line')) as HTMLElement[];
+    if (viewLines.length > 0) {
+      const joined = viewLines
+        .map((line) => (line.textContent ?? '').replace(/\u00a0/g, ' '))
+        .join('\n')
+        .trim();
+      if (joined.length > 10) return joined;
+    }
+  } catch {}
+
+  // Try CodeMirror DOM lines if present
+  try {
+    const cmLines = Array.from(document.querySelectorAll('.cm-line')) as HTMLElement[];
+    if (cmLines.length > 0) {
+      const joined = cmLines
+        .map((line) => (line.textContent ?? '').replace(/\u00a0/g, ' '))
+        .join('\n')
+        .trim();
+      if (joined.length > 10) return joined;
+    }
+  } catch {}
+
   // Prefer textarea value if present (some editors store code here)
   try {
     const textareas = Array.from(document.querySelectorAll('textarea')) as HTMLTextAreaElement[];
