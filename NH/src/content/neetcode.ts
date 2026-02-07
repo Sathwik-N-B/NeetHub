@@ -137,8 +137,6 @@ async function autoTriggerPush() {
     return;
   }
 
-  log('DEBUG: Code extracted, length:', code.length, 'first 100 chars:', code.substring(0, 100));
-
   const rawSlug = extractPageSlug();
   const slug = rawSlug ? rawSlug.toLowerCase().replace(/\s+/g, '-') : 'unknown';
   const url = buildProblemUrl(slug);
@@ -871,20 +869,17 @@ function getMonacoModel(): any | undefined {
   try {
     const model = (window as any).monaco?.editor?.getModels?.()[0];
     if (model) {
-      log('DEBUG: Found Monaco model in main window');
       return model;
     }
   } catch {}
 
   try {
     const frames = Array.from(document.querySelectorAll('iframe')) as HTMLIFrameElement[];
-    log('DEBUG: Checking', frames.length, 'iframes for Monaco');
     for (const frame of frames) {
       try {
         const win = frame.contentWindow as any;
         const model = win?.monaco?.editor?.getModels?.()[0];
         if (model) {
-          log('DEBUG: Found Monaco model in iframe');
           return model;
         }
       } catch {
@@ -893,7 +888,6 @@ function getMonacoModel(): any | undefined {
     }
   } catch {}
 
-  log('DEBUG: No Monaco model found');
   return undefined;
 }
 
@@ -926,7 +920,6 @@ function extractPageLanguage(): string | undefined {
   try {
     const model = getMonacoModel();
     const langId = model?.getLanguageId?.() ?? model?.getModeId?.();
-    log('DEBUG: Monaco langId:', langId);
     if (typeof langId === 'string' && langId.length > 0) {
       const id = langId.toLowerCase();
       if (id === 'java') return 'java';
@@ -1066,6 +1059,7 @@ function detectLanguageFromCode(code: string): string {
     return 'go';
   }
   
+  log('NeetHub: Could not detect language, defaulting to unknown');
   return 'unknown';
 }
 
@@ -1115,18 +1109,6 @@ function patchFetch() {
   window.fetch = async (...args) => {
     const url = getUrl(args[0]);
     const init = (args[1] as RequestInit | undefined);
-    const method = init?.method || 'GET';
-    
-    // Log body for POST/PUT/PATCH requests
-    let bodyStr = '';
-    if (init?.body && (init.method === 'POST' || init.method === 'PUT' || init.method === 'PATCH')) {
-      try {
-        bodyStr = typeof init.body === 'string' ? init.body : JSON.stringify(init.body);
-        if (bodyStr.length > 200) bodyStr = bodyStr.substring(0, 200) + '...';
-      } catch {}
-    }
-    
-    log(`DEBUG: FETCH ${method} ${url}${bodyStr ? ' BODY: ' + bodyStr : ''}`);
     const response = await original(...args);
     tryCaptureFromResponse(response.clone(), url, init);
     return response;
@@ -1146,17 +1128,11 @@ function patchXhr() {
     }
 
     send(body?: Document | BodyInit | null) {
-      let bodyStr = '';
-      if (typeof body === 'string') {
-        bodyStr = body.length > 200 ? body.substring(0, 200) + '...' : body;
-      }
-      log(`DEBUG: XHR send to ${this._url}${bodyStr ? ' BODY: ' + bodyStr : ''}`);
       // Capture request body for pairing with response
       try {
         if (typeof body === 'string') {
           try {
             this._reqData = JSON.parse(body);
-            log('DEBUG: XHR request body:', this._reqData);
           } catch {
             this._reqData = body;
           }
@@ -1189,7 +1165,6 @@ async function tryCaptureFromResponse(response: Response, url?: string, init?: R
   if (init?.body) {
     try {
       requestBody = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
-      log('DEBUG: Parsed request body:', requestBody);
     } catch {}
   }
   
@@ -1201,10 +1176,7 @@ async function tryCaptureFromResponse(response: Response, url?: string, init?: R
      hasProperty(requestBody, ['lang']) ||
      hasProperty(requestBody, ['rawCode']));
   
-  log('DEBUG: isSubmissionUrl:', isSubmissionUrl, 'isSubmissionBody:', isSubmissionBody);
-  
   if (!isSubmissionUrl && !isSubmissionBody) {
-    log('NeetHub: Not a submission request (URL or body), skipping');
     return;
   }
   
