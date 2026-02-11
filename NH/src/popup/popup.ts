@@ -1,86 +1,66 @@
-import type { RepoConfig, Settings } from '../lib/storage';
+import type { Settings } from '../lib/storage';
 
-const ownerInput = document.querySelector<HTMLInputElement>('#repo-owner');
-const nameInput = document.querySelector<HTMLInputElement>('#repo-name');
-const branchInput = document.querySelector<HTMLInputElement>('#repo-branch');
-const uploadCheckbox = document.querySelector<HTMLInputElement>('#upload-enabled');
-const statusEl = document.querySelector<HTMLDivElement>('#status');
-const saveRepoBtn = document.querySelector<HTMLButtonElement>('#save-repo');
-const authBtn = document.querySelector<HTMLButtonElement>('#auth');
-const logoutBtn = document.querySelector<HTMLButtonElement>('#logout');
+// DOM Elements
+const authBtn = document.getElementById('auth-btn') as HTMLButtonElement;
+const settingsBtn = document.getElementById('settings-btn') as HTMLButtonElement;
+const configuredInfo = document.getElementById('configured-info') as HTMLDivElement;
+const repoLink = document.getElementById('repo-link') as HTMLAnchorElement;
+const uploadStatus = document.getElementById('upload-status') as HTMLParagraphElement;
+
+let currentSettings: Settings | null = null;
 
 init();
 
 async function init() {
-  const settings = (await chrome.runtime.sendMessage({ type: 'get-settings' })) as Settings;
-  populate(settings);
+  currentSettings = await chrome.runtime.sendMessage({ type: 'get-settings' }) as Settings;
 
-  // If device flow was completed in the browser but the token isn't saved yet, resume polling.
-  if (!settings.auth?.accessToken && settings.auth?.deviceCode) {
-    void chrome.runtime.sendMessage({ type: 'resume-auth' });
-  }
+  updateUI();
 
+  // Event listeners
+  authBtn.addEventListener('click', openSetupPage);
+  settingsBtn.addEventListener('click', openSetupPage);
+
+  // Listen for settings changes
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes.settings?.newValue) return;
-    populate(changes.settings.newValue as Settings);
+    currentSettings = changes.settings.newValue as Settings;
+    updateUI();
   });
-
-  saveRepoBtn?.addEventListener('click', saveRepo);
-  uploadCheckbox?.addEventListener('change', toggleUpload);
-  authBtn?.addEventListener('click', startAuth);
-  logoutBtn?.addEventListener('click', logout);
 }
 
-function populate(settings: Settings) {
-  ownerInput!.value = settings.repo?.owner ?? '';
-  nameInput!.value = settings.repo?.name ?? '';
-  branchInput!.value = settings.repo?.defaultBranch ?? 'main';
-  uploadCheckbox!.checked = settings.uploadEnabled;
-  statusEl!.innerText = settings.auth?.accessToken ? 'Connected to GitHub' : 'Not authorized';
-}
+function updateUI() {
+  const isConfigured = currentSettings?.auth?.accessToken && 
+                       currentSettings?.repo?.owner && 
+                       currentSettings?.repo?.name;
 
-async function saveRepo() {
-  const repo: RepoConfig = {
-    owner: ownerInput!.value.trim(),
-    name: nameInput!.value.trim(),
-    defaultBranch: branchInput!.value.trim() || 'main',
-  };
-
-  const response = await chrome.runtime.sendMessage({ type: 'save-repo', payload: repo });
-  setStatus(response?.ok ? 'Repository saved' : `Failed: ${response?.error ?? 'unknown'}`);
-}
-
-async function toggleUpload() {
-  const enabled = uploadCheckbox!.checked;
-  const response = await chrome.runtime.sendMessage({ type: 'toggle-upload', payload: enabled });
-  setStatus(response?.ok ? 'Auto-upload updated' : 'Failed to update');
-}
-
-async function startAuth() {
-  const response = await chrome.runtime.sendMessage({ type: 'start-auth' });
-  if (response?.ok && response.flow?.verificationUri && response.flow?.userCode) {
-    // Open the GitHub device verification page in a new tab like LeetHub does
-    chrome.tabs.create({ url: response.flow.verificationUri });
-
-    // Try to copy the user code to clipboard for convenience
-    try {
-      await navigator.clipboard.writeText(response.flow.userCode);
-      setStatus(`Code copied. Enter ${response.flow.userCode} in the opened GitHub tab.`);
-    } catch {
-      setStatus(`Enter ${response.flow.userCode} at the opened GitHub tab (${response.flow.verificationUri}).`);
+  if (isConfigured) {
+    // Show configured state
+    configuredInfo.classList.add('show');
+    authBtn.textContent = 'Reconfigure';
+    settingsBtn.style.display = 'inline-flex';
+    
+    // Update repo info
+    if (currentSettings?.repo) {
+      repoLink.textContent = `${currentSettings.repo.owner}/${currentSettings.repo.name}`;
+      repoLink.href = `https://github.com/${currentSettings.repo.owner}/${currentSettings.repo.name}`;
+      uploadStatus.textContent = currentSettings.uploadEnabled 
+        ? 'Auto-upload: Enabled ✓' 
+        : 'Auto-upload: Disabled';
     }
-  } else if (response?.error) {
-    setStatus(`Auth failed: ${response.error}`);
   } else {
-    setStatus('Failed to start auth');
+    // Show setup state
+    configuredInfo.classList.remove('show');
+    authBtn.innerHTML = `
+      <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+      </svg>
+      Authenticate
+    `;
+    settingsBtn.style.display = 'none';
   }
 }
 
-async function logout() {
-  const response = await chrome.runtime.sendMessage({ type: 'logout' });
-  setStatus(response?.ok ? 'Logged out' : 'Logout failed');
-}
-
-function setStatus(message: string) {
-  statusEl!.innerText = message;
+function openSetupPage() {
+  // Open the setup page in a new tab
+  chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome/welcome.html') });
 }

@@ -12,6 +12,7 @@ export default defineConfig({
         'content-neetcode': path.resolve(__dirname, 'src/content/neetcode.ts'),
         popup: path.resolve(__dirname, 'src/popup/popup.html'),
         options: path.resolve(__dirname, 'src/options/options.html'),
+        welcome: path.resolve(__dirname, 'src/welcome/welcome.html'),
       },
       output: {
         entryFileNames: '[name].js',

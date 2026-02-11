@@ -20,5 +20,11 @@
       "js": ["content-neetcode.js"],
       "run_at": "document_start"
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/welcome/welcome.html"],
+      "matches": ["<all_urls>"]
+    }
   ]
 }
