@@ -1,12 +1,12 @@
-# LeetHub-3.0 (NeetHub Edition)
+# NeetHub
 
 Chrome extension that brings LeetHub-style automation to NeetCode: automatically captures accepted submissions and pushes them to your GitHub repository with runtime/memory metrics.
 
 ## Features
-- ✅ **LeetHub-style interface** - Clean popup with GitHub authentication flow
+- ✅ **Clean popup interface** - Simple GitHub authentication flow
 - ✅ **Problem statistics dashboard** - Track solved problems by difficulty (Easy/Medium/Hard)
 - ✅ **Automatic submission capture** - Detects accepted solutions and auto-commits
-- ✅ **Runtime & memory stats** - Captures performance metrics like LeetCode (e.g., "Time: 61ms, Memory: 63.4 MB")
+- ✅ **Runtime & memory stats** - Captures performance metrics (e.g., "Time: 61ms, Memory: 63.4 MB")
 - ✅ **Multi-language support** - Java, Python, C++, JavaScript, TypeScript, and more
 - ✅ **Proper code formatting** - Preserves indentation from Monaco/CodeMirror editors
 - ✅ **Problem metadata** - Includes difficulty, description, problem numbers in commits
@@ -35,17 +35,17 @@ Chrome extension that brings LeetHub-style automation to NeetCode: automatically
    - Choose to create a new repository or link an existing one
    - Click "Get Started"
 
-### Using LeetHub-3.0
+### Using NeetHub
 1. Navigate to [NeetCode.io](https://neetcode.io) and solve a problem
-2. Submit your solution - when accepted, LeetHub automatically:
+2. Submit your solution - when accepted, NeetHub automatically:
    - Extracts your code with proper formatting
    - Detects the programming language
    - Captures runtime and memory metrics
-   - Commits to GitHub with format: `Time: Xms, Memory: Y MB - LeetHub`
+   - Commits to GitHub with format: `Time: Xms, Memory: Y MB - NeetHub`
 3. Files are organized as: `NeetCode/0001-problem-name/0001-problem-name.java`
 4. View your progress in the extension popup with problem statistics
 
-## Development
+## Development-
 - **Dev mode** (for popup/options rapid iteration):
   ```bash
   npm run dev
