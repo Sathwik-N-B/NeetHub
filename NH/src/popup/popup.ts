@@ -6,6 +6,13 @@ const settingsBtn = document.getElementById('settings-btn') as HTMLButtonElement
 const configuredInfo = document.getElementById('configured-info') as HTMLDivElement;
 const repoLink = document.getElementById('repo-link') as HTMLAnchorElement;
 const uploadStatus = document.getElementById('upload-status') as HTMLParagraphElement;
+const successMessage = document.getElementById('success-message') as HTMLDivElement;
+const successRepo = document.getElementById('success-repo') as HTMLSpanElement;
+const statsSection = document.getElementById('stats-section') as HTMLDivElement;
+const totalProblems = document.getElementById('total-problems') as HTMLSpanElement;
+const easyCount = document.getElementById('easy-count') as HTMLDivElement;
+const mediumCount = document.getElementById('medium-count') as HTMLDivElement;
+const hardCount = document.getElementById('hard-count') as HTMLDivElement;
 
 let currentSettings: Settings | null = null;
 
@@ -46,7 +53,15 @@ function updateUI() {
       uploadStatus.textContent = currentSettings.uploadEnabled 
         ? 'Auto-upload: Enabled ✓' 
         : 'Auto-upload: Disabled';
+      
+      // Show success message
+      successRepo.textContent = `${currentSettings.repo.owner}/${currentSettings.repo.name}`;
+      successMessage.classList.add('show');
     }
+
+    // Show statistics
+    statsSection.classList.add('show');
+    updateStatistics();
   } else {
     // Show setup state
     configuredInfo.classList.remove('show');
@@ -56,6 +71,17 @@ function updateUI() {
       </svg>
       Authenticate
     `;
+
+function updateStatistics() {
+  // Get statistics from settings
+  const stats = currentSettings?.statistics || { easy: 0, medium: 0, hard: 0 };
+  const total = stats.easy + stats.medium + stats.hard;
+  
+  totalProblems.textContent = total.toString();
+  easyCount.textContent = stats.easy.toString();
+  mediumCount.textContent = stats.medium.toString();
+  hardCount.textContent = stats.hard.toString();
+}
     settingsBtn.style.display = 'none';
   }
 }

@@ -10,14 +10,22 @@ export type AuthState = {
   expiresAt?: number;
 };
 
+export type ProblemStatistics = {
+  easy: number;
+  medium: number;
+  hard: number;
+};
+
 export type Settings = {
   repo?: RepoConfig;
   auth?: AuthState;
   uploadEnabled: boolean;
+  statistics?: ProblemStatistics;
 };
 
 const DEFAULT_SETTINGS: Settings = {
   uploadEnabled: true,
+  statistics: { easy: 0, medium: 0, hard: 0 },
 };
 
 export async function getSettings(): Promise<Settings> {

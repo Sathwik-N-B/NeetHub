@@ -166,10 +166,14 @@ async function linkExistingRepo() {
   const response = await chrome.runtime.sendMessage({ type: 'save-repo', payload: repo });
   
   if (response?.ok) {
-    showSuccess(repoStatus, `✓ Successfully linked ${owner}/${name} to NeetHub`);
+    showSuccess(repoStatus, `✓ Successfully linked ${owner}/${name} to LeetHub. Start LeetCoding now!`);
+    
+    // Add unlink option
+    repoStatus.innerHTML += `<br><a href="#" style="color: #79c0ff; text-decoration: none; font-size: 12px;" id="unlink-btn">Linked the wrong repo? Unlink</a>`;
+    
     setTimeout(() => {
       window.close();
-    }, 1500);
+    }, 2500);
   } else {
     showError(repoStatus, response?.error || 'Failed to link repository');
     getStartedBtn.disabled = false;
@@ -227,10 +231,14 @@ async function createNewRepo() {
     const saveResponse = await chrome.runtime.sendMessage({ type: 'save-repo', payload: repo });
     
     if (saveResponse?.ok) {
-      showSuccess(repoStatus, `✓ Successfully created and linked ${repo.owner}/${repo.name}!`);
+      showSuccess(repoStatus, `✓ Successfully created and linked ${repo.owner}/${repo.name} to LeetHub. Start LeetCoding now!`);
+      
+      // Add unlink option
+      repoStatus.innerHTML += `<br><a href="#" style="color: #79c0ff; text-decoration: none; font-size: 12px;" id="unlink-btn">Linked the wrong repo? Unlink</a>`;
+      
       setTimeout(() => {
         window.close();
-      }, 1500);
+      }, 2500);
     } else {
       throw new Error(saveResponse?.error || 'Failed to save repository');
     }

@@ -1,9 +1,10 @@
-# NeetHub
+# LeetHub-3.0 (NeetHub Edition)
 
-Chrome extension that mirrors LeetHub-style automation for NeetCode: automatically captures accepted submissions and pushes them to your GitHub repository with runtime/memory metrics.
+Chrome extension that brings LeetHub-style automation to NeetCode: automatically captures accepted submissions and pushes them to your GitHub repository with runtime/memory metrics.
 
 ## Features
-- ✅ **LeetHub-style popup** - Click extension icon for guided setup with GitHub authentication
+- ✅ **LeetHub-style interface** - Clean popup with GitHub authentication flow
+- ✅ **Problem statistics dashboard** - Track solved problems by difficulty (Easy/Medium/Hard)
 - ✅ **Automatic submission capture** - Detects accepted solutions and auto-commits
 - ✅ **Runtime & memory stats** - Captures performance metrics like LeetCode (e.g., "Time: 61ms, Memory: 63.4 MB")
 - ✅ **Multi-language support** - Java, Python, C++, JavaScript, TypeScript, and more
@@ -28,18 +29,21 @@ Chrome extension that mirrors LeetHub-style automation for NeetCode: automatical
    - Click **Load unpacked** → select the `dist` folder
 
 4. **Click the extension icon** in your browser toolbar:
-   - Click "Authenticate" to connect with GitHub
+   - Click "Authenticate" to connect with GitHub (GitHub Device Flow)
+   - Enter the code shown in the opened GitHub tab
+   - Complete 2FA if enabled
    - Choose to create a new repository or link an existing one
    - Click "Get Started"
 
-### Using NeetHub
+### Using LeetHub-3.0
 1. Navigate to [NeetCode.io](https://neetcode.io) and solve a problem
-2. Submit your solution - when accepted, NeetHub automatically:
+2. Submit your solution - when accepted, LeetHub automatically:
    - Extracts your code with proper formatting
    - Detects the programming language
    - Captures runtime and memory metrics
-   - Commits to GitHub with format: `Time: Xms, Memory: Y MB - NeetHub`
+   - Commits to GitHub with format: `Time: Xms, Memory: Y MB - LeetHub`
 3. Files are organized as: `NeetCode/0001-problem-name/0001-problem-name.java`
+4. View your progress in the extension popup with problem statistics
 
 ## Development
 - **Dev mode** (for popup/options rapid iteration):
