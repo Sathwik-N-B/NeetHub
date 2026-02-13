@@ -1,27 +1,30 @@
-import { commitSubmission, ensureRepo, pollForToken, startDeviceFlow, type SubmissionPayload } from '../lib/github';
+import { commitSubmission, ensureRepo, type SubmissionPayload } from '../lib/github';
 import { clearAuth, getSettings, saveSettings, type RepoConfig } from '../lib/storage';
 import { error, log, warn } from '../lib/logger';
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  void handleMessage(message).then(sendResponse).catch((err) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  void handleMessage(message, sender).then(sendResponse).catch((err) => {
     error('Unhandled error', err);
     sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) });
   });
   return true;
 });
 
-async function handleMessage(message: unknown): Promise<unknown> {
+async function handleMessage(message: unknown, sender?: chrome.runtime.MessageSender): Promise<unknown> {
   if (!message || typeof message !== 'object') return { ok: false, error: 'bad-message' };
 
-  const { type, payload } = message as { type: string; payload?: unknown };
+  const msg = message as Record<string, unknown>;
+
+  // Handle OAuth redirect completion from authorize content script
+  if (msg.closeWebPage !== undefined) {
+    return handleOAuthComplete(msg, sender);
+  }
+
+  const { type, payload } = msg as { type: string; payload?: unknown };
 
   switch (type) {
     case 'submission':
       return handleSubmission(payload as SubmissionPayload);
-    case 'start-auth':
-      return handleAuth();
-    case 'resume-auth':
-      return resumeAuth();
     case 'get-settings':
       return getSettings();
     case 'save-repo':
@@ -36,48 +39,45 @@ async function handleMessage(message: unknown): Promise<unknown> {
   }
 }
 
-// Retry token polling if the user already completed device flow in the browser
-async function resumeAuth() {
-  const settings = await getSettings();
-  const deviceCode = settings.auth?.deviceCode;
-  if (!deviceCode || settings.auth?.accessToken) return { ok: false, error: 'no-pending-auth' };
-  try {
-    const token = await pollForToken(deviceCode, 5);
-    const latest = await getSettings();
-    await saveSettings({ ...latest, auth: { accessToken: token, expiresAt: Date.now() + 3600_000 } });
-    log('GitHub token saved (resume)');
-    return { ok: true };
-  } catch (err) {
-    error('Auth resume failed', err);
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
+async function handleOAuthComplete(
+  msg: Record<string, unknown>,
+  sender?: chrome.runtime.MessageSender
+): Promise<unknown> {
+  if (msg.isSuccess) {
+    const token = msg.token as string;
+    const username = msg.username as string;
 
-async function handleAuth() {
-  try {
-    const flow = await startDeviceFlow();
-    log('Device flow started');
-
+    // Save auth to settings
     const settings = await getSettings();
-    await saveSettings({ ...settings, auth: { deviceCode: flow.deviceCode } });
+    await saveSettings({
+      ...settings,
+      auth: { accessToken: token, username },
+    });
+    log(`GitHub OAuth complete for ${username}`);
 
-    // Don't create notification here - popup will handle user interaction
+    // Clear pipe flag
+    await chrome.storage.local.set({ pipe_neethub: false });
 
-    // Poll in background; errors logged.
-    void pollForToken(flow.deviceCode, flow.interval)
-      .then(async (token) => {
-        const latest = await getSettings();
-        const expiresAt = Date.now() + flow.expiresIn * 1000;
-        await saveSettings({ ...latest, auth: { accessToken: token, expiresAt } });
-        log('GitHub token saved');
-      })
-      .catch((err) => error('Auth polling failed', err));
+    // Close the GitHub redirect tab (sender is the authorize content script tab)
+    if (sender?.tab?.id) {
+      try {
+        await chrome.tabs.remove(sender.tab.id);
+      } catch {
+        // Tab might already be closed
+      }
+    }
 
-    return { ok: true, flow };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    error('Auth start failed', message);
-    return { ok: false, error: message };
+    return { ok: true };
+  } else {
+    // Auth failed — close the tab
+    if (sender?.tab?.id) {
+      try {
+        await chrome.tabs.remove(sender.tab.id);
+      } catch {
+        // ignore
+      }
+    }
+    return { ok: false, error: 'auth-failed' };
   }
 }
 

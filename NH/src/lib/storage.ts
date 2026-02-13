@@ -5,9 +5,8 @@ export type RepoConfig = {
 };
 
 export type AuthState = {
-  deviceCode?: string;
   accessToken?: string;
-  expiresAt?: number;
+  username?: string;
 };
 
 export type ProblemStatistics = {

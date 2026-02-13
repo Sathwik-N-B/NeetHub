@@ -10,6 +10,7 @@ export default defineConfig({
       input: {
         background: path.resolve(__dirname, 'src/background/index.ts'),
         'content-neetcode': path.resolve(__dirname, 'src/content/neetcode.ts'),
+        'content-authorize': path.resolve(__dirname, 'src/content/authorize.ts'),
         popup: path.resolve(__dirname, 'src/popup/popup.html'),
         options: path.resolve(__dirname, 'src/options/options.html'),
         welcome: path.resolve(__dirname, 'src/welcome/welcome.html'),

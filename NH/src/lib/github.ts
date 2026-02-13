@@ -1,86 +1,6 @@
 import { error, log } from './logger';
 import type { RepoConfig } from './storage';
 
-const CLIENT_ID = 'Ov23likqHQmClRLa1Vas';
-
-export type DeviceFlowStart = {
-  deviceCode: string;
-  userCode: string;
-  verificationUri: string;
-  expiresIn: number;
-  interval: number;
-};
-
-export async function startDeviceFlow(scope = 'repo'): Promise<DeviceFlowStart> {
-  const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    scope,
-  });
-
-  const response = await fetch('https://github.com/login/device/code', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Accept: 'application/json',
-    },
-    body: params.toString(),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`GitHub device flow start failed: ${response.status} ${text || ''}`.trim());
-  }
-
-  const payload = await response.json();
-  if (payload.error) {
-    throw new Error(payload.error_description ?? payload.error);
-  }
-  return {
-    deviceCode: payload.device_code,
-    userCode: payload.user_code,
-    verificationUri: payload.verification_uri,
-    expiresIn: payload.expires_in,
-    interval: payload.interval ?? 5,
-  };
-}
-
-export async function pollForToken(deviceCode: string, intervalSeconds: number): Promise<string> {
-  const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    device_code: deviceCode,
-    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-  });
-
-  while (true) {
-    const response = await fetch('https://github.com/login/oauth/access_token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-      body: params.toString(),
-    });
-
-    if (!response.ok) {
-      throw new Error(`GitHub token polling failed: ${response.status}`);
-    }
-
-    const payload = await response.json();
-
-    if (payload.error === 'authorization_pending') {
-      await wait(intervalSeconds * 1000);
-      continue;
-    }
-
-    if (payload.error) {
-      throw new Error(`GitHub token polling error: ${payload.error}`);
-    }
-
-    if (!payload.access_token) {
-      throw new Error('GitHub token not present in response');
-    }
-
-    return payload.access_token as string;
-  }
-}
-
 export async function ensureRepo(token: string, repo: RepoConfig): Promise<void> {
   const existing = await fetchGitHub<{ default_branch: string }>(`/repos/${repo.owner}/${repo.name}`, token);
 
@@ -301,8 +221,8 @@ async function fetchGitHub<T = unknown>(path: string, token: string, method = 'G
   const response = await fetch(`https://api.github.com${path}`, {
     method,
     headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.github+json',
+      Authorization: `token ${token}`,
+      Accept: 'application/vnd.github.v3+json',
       'Content-Type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -312,8 +232,4 @@ async function fetchGitHub<T = unknown>(path: string, token: string, method = 'G
   const status = response.status;
   const data = ok ? ((await response.json()) as T) : undefined;
   return { ok, status, data, text: () => response.text() };
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

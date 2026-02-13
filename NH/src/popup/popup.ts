@@ -71,6 +71,9 @@ function updateUI() {
       </svg>
       Authenticate
     `;
+    settingsBtn.style.display = 'none';
+  }
+}
 
 function updateStatistics() {
   // Get statistics from settings
@@ -81,9 +84,6 @@ function updateStatistics() {
   easyCount.textContent = stats.easy.toString();
   mediumCount.textContent = stats.medium.toString();
   hardCount.textContent = stats.hard.toString();
-}
-    settingsBtn.style.display = 'none';
-  }
 }
 
 function openSetupPage() {

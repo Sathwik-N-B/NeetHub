@@ -63,27 +63,19 @@ async function init() {
 async function handleAuth() {
   authBtn.disabled = true;
   authBtn.innerHTML = '<span class="loading"></span> Authenticating...';
-  
-  const response = await chrome.runtime.sendMessage({ type: 'start-auth' });
-  
-  if (response?.ok && response.flow?.verificationUri && response.flow?.userCode) {
-    // Open GitHub auth in new tab
-    chrome.tabs.create({ url: response.flow.verificationUri });
-    
-    // Copy code to clipboard
-    try {
-      await navigator.clipboard.writeText(response.flow.userCode);
-      showInfo(authStatus, `✓ Code copied: ${response.flow.userCode}\nEnter it in the GitHub tab to authorize.`);
-    } catch {
-      showInfo(authStatus, `Enter code ${response.flow.userCode} in the GitHub tab.`);
-    }
-    
-    authBtn.innerHTML = '<span class="loading"></span> Waiting for authorization...';
-  } else {
-    showError(authStatus, response?.error || 'Failed to start authentication');
-    authBtn.disabled = false;
-    authBtn.textContent = 'Authenticate';
-  }
+
+  const CLIENT_ID = 'Ov23likqHQmClRLa1Vas';
+  const SCOPES = 'repo';
+
+  // Don't include redirect_uri — GitHub will use the callback URL configured in the app settings
+  const url = `https://github.com/login/oauth/authorize?client_id=${CLIENT_ID}&scope=${encodeURIComponent(SCOPES)}`;
+
+  // Set pipe flag so the authorize content script knows to catch the redirect
+  chrome.storage.local.set({ pipe_neethub: true }, () => {
+    chrome.tabs.create({ url, active: true });
+  });
+
+  authBtn.innerHTML = '<span class="loading"></span> Waiting for authorization...';
 }
 
 function enableRepoSection() {
