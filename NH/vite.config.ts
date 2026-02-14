@@ -9,6 +9,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         background: path.resolve(__dirname, 'src/background/index.ts'),
+        'content-neetcode-main': path.resolve(__dirname, 'src/content/neetcode-main.ts'),
         'content-neetcode': path.resolve(__dirname, 'src/content/neetcode.ts'),
         'content-authorize': path.resolve(__dirname, 'src/content/authorize.ts'),
         popup: path.resolve(__dirname, 'src/popup/popup.html'),

@@ -17,6 +17,12 @@
   "content_scripts": [
     {
       "matches": ["https://neetcode.io/*"],
+      "js": ["content-neetcode-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://neetcode.io/*"],
       "js": ["content-neetcode.js"],
       "run_at": "document_start"
     },

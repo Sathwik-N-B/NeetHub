@@ -33,6 +33,7 @@ let lastAcceptedSubmission: SubmissionPayload | null = null; // Track last accep
 let currentProblemSlug: string | null = null; // Track current problem to reset state on navigation
 let toolbarButtonState: 'idle' | 'pushing' | 'success' | 'error' = 'idle';
 let lastRequestLanguage: string | undefined; // Capture language from API request
+let lastCapturedCode: string | undefined; // Capture code from network request body (LeetHub approach)
 
 // Ensure DOM is ready before injecting
 function initializeExtension() {
@@ -55,12 +56,29 @@ if (document.body) {
   document.addEventListener('DOMContentLoaded', initializeExtension);
 }
 
-// Passive listener for manual injections from page context
+// ── LeetHub approach: listen for code captured by main-world interceptor ──
+// The main-world script (neetcode-main.ts) patches the real window.fetch/XHR
+// and sends us the exact code string from the submission request body.
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
   const data = event.data;
-  if (!data || data.source !== 'neetcode') return;
+  if (!data) return;
 
+  // Handle code captured from main-world interceptor
+  if (data.source === 'neethub-main-world' && data.type === 'captured-submission-code') {
+    if (typeof data.code === 'string' && data.code.length > 10) {
+      lastCapturedCode = data.code;
+      log('Captured code from main-world interceptor, length:', data.code.length);
+    }
+    if (typeof data.lang === 'string' && data.lang.length > 0) {
+      lastRequestLanguage = data.lang;
+      log('Captured language from main-world interceptor:', data.lang);
+    }
+    return;
+  }
+
+  // Legacy: passive listener for manual injections from page context
+  if (data.source !== 'neetcode') return;
   if (data.type !== 'submission') return;
 
   const payload = data.payload as SubmissionPayload;
@@ -130,11 +148,18 @@ function startMonitoringForAcceptance() {
 }
 
 async function autoTriggerPush() {
-  // Extract submission data from page
-  const code = extractPageCode();
+  // LeetHub approach: prefer code captured from the network request body
+  // (the exact code string sent to NeetCode's backend on submit).
+  // Fall back to DOM extraction only if network capture missed it.
+  const code = lastCapturedCode || extractPageCode();
   if (!code) {
-    warn('Cannot auto-push: no code found');
+    warn('Cannot auto-push: no code found (neither from network request nor DOM)');
     return;
+  }
+  if (lastCapturedCode) {
+    log('NeetHub: Using code captured from network request body, length:', code.length);
+  } else {
+    warn('NeetHub: Network capture missed code, fell back to DOM extraction, length:', code.length);
   }
 
   const rawSlug = extractPageSlug();
@@ -1183,20 +1208,48 @@ function extractPageCode(): string | undefined {
   // Try reading Monaco model directly if available
   try {
     const code = getMonacoModel()?.getValue?.();
-    if (typeof code === 'string' && code.trim().length > 10) return code.trim();
-  } catch {}
-
-  // Try reading Monaco DOM lines when model access is blocked
-  try {
-    const viewLines = Array.from(document.querySelectorAll('.monaco-editor .view-lines .view-line')) as HTMLElement[];
-    if (viewLines.length > 0) {
-      const joined = viewLines
-        .map((line) => (line.textContent ?? '').replace(/\u00a0/g, ' '))
-        .join('\n')
-        .trim();
-      if (joined.length > 10) return joined;
+    if (typeof code === 'string' && code.trim().length > 10) {
+      log('NeetHub: Extracted code from Monaco model, length:', code.trim().length);
+      return code.trim();
     }
   } catch {}
+
+  // Try reading entire Monaco editor content from parent container
+  try {
+    const monacoContainer = document.querySelector('.monaco-editor');
+    if (monacoContainer) {
+      // Get all visible text content from Monaco lines
+      const lines: string[] = [];
+      const viewLines = monacoContainer.querySelectorAll('.view-lines .view-line');
+      
+      for (let i = 0; i < viewLines.length; i++) {
+        const line = viewLines[i] as HTMLElement;
+        // Extract text content while preserving spaces
+        let lineText = '';
+        const walker = document.createTreeWalker(
+          line,
+          NodeFilter.SHOW_TEXT,
+          null,
+          false
+        );
+        let node: Node | null;
+        while ((node = walker.nextNode())) {
+          lineText += node.textContent?.replace(/\u00a0/g, ' ') || '';
+        }
+        lines.push(lineText);
+      }
+      
+      if (lines.length > 0) {
+        const joined = lines.join('\n').trim();
+        if (joined.length > 10) {
+          log('NeetHub: Extracted code from Monaco DOM, lines:', lines.length, 'total length:', joined.length);
+          return joined;
+        }
+      }
+    }
+  } catch (err) {
+    log('NeetHub: Monaco DOM extraction failed:', err);
+  }
 
   // Try CodeMirror DOM lines if present
   try {
@@ -1206,9 +1259,14 @@ function extractPageCode(): string | undefined {
         .map((line) => (line.textContent ?? '').replace(/\u00a0/g, ' '))
         .join('\n')
         .trim();
-      if (joined.length > 10) return joined;
+      if (joined.length > 10) {
+        log('NeetHub: Extracted code from CodeMirror, length:', joined.length);
+        return joined;
+      }
     }
-  } catch {}
+  } catch (err) {
+    log('NeetHub: CodeMirror extraction failed:', err);
+  }
 
   // Prefer textarea value if present (some editors store code here)
   try {
@@ -1220,8 +1278,13 @@ function extractPageCode(): string | undefined {
         best = value;
       }
     }
-    if (best) return best;
-  } catch {}
+    if (best) {
+      log('NeetHub: Extracted code from textarea, length:', best.length);
+      return best;
+    }
+  } catch (err) {
+    log('NeetHub: Textarea extraction failed:', err);
+  }
 
   // Try common code containers as a last resort
   const selectors = [
@@ -1237,11 +1300,49 @@ function extractPageCode(): string | undefined {
     const el = document.querySelector(sel);
     if (el) {
       const text = el.textContent?.trim();
-      if (text && text.length > 10) return text;
+      if (text && text.length > 10) {
+        log('NeetHub: Extracted code from selector', sel, 'length:', text.length);
+        return text;
+      }
     }
   }
 
+  warn('NeetHub: Failed to extract code from page');
   return undefined;
+}
+
+// LeetHub-style: extract code & language from any outgoing request body
+// that looks like a submission (contains rawCode, code, lang, etc.).
+// This captures the EXACT code string the user submitted, with all
+// whitespace and indentation intact, before the response even arrives.
+function captureCodeFromRequestBody(body: unknown) {
+  try {
+    let parsed: any;
+    if (typeof body === 'string') {
+      parsed = JSON.parse(body);
+    } else if (body && typeof body === 'object') {
+      parsed = body;
+    } else {
+      return;
+    }
+
+    // NeetCode nests data: { data: { rawCode, lang, problemId } }
+    const data = parsed?.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+
+    const code = data?.rawCode ?? data?.code ?? data?.solution ?? data?.answer;
+    const lang = data?.lang ?? data?.language ?? data?.langSlug;
+
+    if (typeof code === 'string' && code.trim().length > 10) {
+      lastCapturedCode = code;
+      log('NeetHub: Captured code from network request body, length:', code.length);
+    }
+    if (typeof lang === 'string' && lang.trim().length > 0) {
+      lastRequestLanguage = lang;
+      log('NeetHub: Captured language from network request body:', lang);
+    }
+  } catch {
+    // Not JSON or no relevant fields — ignore
+  }
 }
 
 function patchFetch() {
@@ -1249,6 +1350,10 @@ function patchFetch() {
   window.fetch = async (...args) => {
     const url = getUrl(args[0]);
     const init = (args[1] as RequestInit | undefined);
+
+    // LeetHub approach: capture code from outgoing request body BEFORE awaiting response
+    captureCodeFromRequestBody(init?.body);
+
     const response = await original(...args);
     tryCaptureFromResponse(response.clone(), url, init);
     return response;
@@ -1268,6 +1373,9 @@ function patchXhr() {
     }
 
     send(body?: Document | BodyInit | null) {
+      // LeetHub approach: capture code from outgoing request body
+      captureCodeFromRequestBody(body);
+
       // Capture request body for pairing with response
       try {
         if (typeof body === 'string') {
