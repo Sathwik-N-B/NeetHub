@@ -2,11 +2,8 @@ import type { Settings } from '../lib/storage';
 
 // DOM Elements
 const authBtn = document.getElementById('auth-btn') as HTMLButtonElement;
-const configuredInfo = document.getElementById('configured-info') as HTMLDivElement;
-const repoLink = document.getElementById('repo-link') as HTMLAnchorElement;
-const uploadStatus = document.getElementById('upload-status') as HTMLParagraphElement;
-const successMessage = document.getElementById('success-message') as HTMLDivElement;
-const successRepo = document.getElementById('success-repo') as HTMLSpanElement;
+const repoLinkSection = document.getElementById('repo-link-section') as HTMLDivElement;
+const repoLinkSimple = document.getElementById('repo-link-simple') as HTMLAnchorElement;
 const statsSection = document.getElementById('stats-section') as HTMLDivElement;
 const totalProblems = document.getElementById('total-problems') as HTMLSpanElement;
 const easyCount = document.getElementById('easy-count') as HTMLDivElement;
@@ -41,19 +38,13 @@ function updateUI() {
   if (isConfigured) {
     // Show configured state — hide auth section completely
     document.getElementById('auth-section')!.style.display = 'none';
-    configuredInfo.classList.add('show');
     
-    // Update repo info
+    // Show simple repo link
+    repoLinkSection.style.display = 'block';
     if (currentSettings?.repo) {
-      repoLink.textContent = `${currentSettings.repo.owner}/${currentSettings.repo.name}`;
-      repoLink.href = `https://github.com/${currentSettings.repo.owner}/${currentSettings.repo.name}`;
-      uploadStatus.textContent = currentSettings.uploadEnabled 
-        ? 'Auto-upload: Enabled ✓' 
-        : 'Auto-upload: Disabled';
-      
-      // Show success message
-      successRepo.textContent = `${currentSettings.repo.owner}/${currentSettings.repo.name}`;
-      successMessage.classList.add('show');
+      const repoFullName = `${currentSettings.repo.owner}/${currentSettings.repo.name}`;
+      repoLinkSimple.textContent = repoFullName;
+      repoLinkSimple.href = `https://github.com/${repoFullName}`;
     }
 
     // Show statistics
@@ -62,8 +53,7 @@ function updateUI() {
   } else {
     // Show setup state
     document.getElementById('auth-section')!.style.display = 'block';
-    configuredInfo.classList.remove('show');
-    successMessage.classList.remove('show');
+    repoLinkSection.style.display = 'none';
     statsSection.classList.remove('show');
     authBtn.innerHTML = `
       <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor">
