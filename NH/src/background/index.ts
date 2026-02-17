@@ -67,6 +67,10 @@ async function handleOAuthComplete(
       }
     }
 
+    // Open the welcome/setup page for repo configuration
+    const welcomeUrl = chrome.runtime.getURL('src/welcome/welcome.html');
+    await chrome.tabs.create({ url: welcomeUrl, active: true });
+
     return { ok: true };
   } else {
     // Auth failed — close the tab

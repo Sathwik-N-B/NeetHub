@@ -20,13 +20,25 @@ async function init() {
   updateUI();
 
   // Event listeners
-  authBtn.addEventListener('click', openSetupPage);
+  authBtn.addEventListener('click', startAuth);
 
   // Listen for settings changes
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes.settings?.newValue) return;
     currentSettings = changes.settings.newValue as Settings;
     updateUI();
+  });
+}
+
+function startAuth() {
+  // Start GitHub OAuth directly from popup (LeetHub approach)
+  const CLIENT_ID = 'Ov23likqHQmClRLa1Vas';
+  const SCOPES = 'repo';
+  const url = `https://github.com/login/oauth/authorize?client_id=${CLIENT_ID}&scope=${encodeURIComponent(SCOPES)}`;
+
+  // Set pipe flag so the authorize content script catches the redirect
+  chrome.storage.local.set({ pipe_neethub: true }, () => {
+    chrome.tabs.create({ url, active: true });
   });
 }
 
@@ -76,6 +88,5 @@ function updateStatistics() {
 }
 
 function openSetupPage() {
-  // Open the setup page in a new tab
   chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome/welcome.html') });
 }

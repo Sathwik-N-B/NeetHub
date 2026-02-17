@@ -25,13 +25,15 @@ async function init() {
 
   if (settings.auth?.accessToken) {
     if (settings.repo?.owner && settings.repo?.name) {
-      // Already fully configured, close tab
+      // Already fully configured — show success and close
+      showSuccess(authStatus, '✓ Already configured!');
       window.close();
       return;
     }
     
-    // Authenticated but no repo, enable repo section
-    showSuccess(authStatus, '✓ Authenticated with GitHub');
+    // Authenticated but no repo — hide auth UI, show repo section directly
+    document.getElementById('auth-section')!.style.display = 'none';
+    showSuccess(authStatus, `✓ Authenticated as ${settings.auth.username || 'GitHub user'}`);
     enableRepoSection();
     await loadUserRepos();
   }
