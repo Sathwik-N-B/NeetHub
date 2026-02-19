@@ -25,9 +25,12 @@ async function init() {
 
   if (settings.auth?.accessToken) {
     if (settings.repo?.owner && settings.repo?.name) {
-      // Already fully configured — show success and close
-      showSuccess(authStatus, '✓ Already configured!');
-      window.close();
+      // Already fully configured — show linked status
+      document.getElementById('auth-section')!.style.display = 'none';
+      showSuccess(authStatus, `✓ Authenticated as ${settings.auth.username || 'GitHub user'}`);
+      showSuccess(repoStatus, `✓ Linked to ${settings.repo.owner}/${settings.repo.name}. Start NeetCoding now!`);
+      repoSection.classList.add('enabled');
+      getStartedBtn.style.display = 'none';
       return;
     }
     
