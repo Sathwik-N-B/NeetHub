@@ -271,7 +271,7 @@ function showLinkedState(owner: string, name: string) {
 
   linkedDiv.innerHTML = `
     <p style="font-size: 16px; color: #7ee787; margin-bottom: 8px;">
-      Successfully linked <strong style="color: #fff;">${owner}/${name}</strong> to NeetHub. Start <strong style="color: #fff;">NeetCoding</strong> <span style="color: #7ee787;">now!</span>
+      Successfully linked <a href="https://github.com/${owner}/${name}" target="_blank" style="color: #fff; font-weight: 700; text-decoration: none;">${owner}/${name}</a> to NeetHub. Start <a href="https://neetcode.io" target="_blank" style="color: #fff; font-weight: 700; text-decoration: none;">NeetCoding</a> <span style="color: #7ee787;">now!</span>
     </p>
     <p style="font-size: 13px; color: #b3b3b3;">
       Linked the wrong repo? <a href="#" id="unlink-btn" style="color: #fff; font-weight: 600; text-decoration: none;">Unlink</a>
