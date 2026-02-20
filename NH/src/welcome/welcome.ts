@@ -278,6 +278,27 @@ function showLinkedState(owner: string, name: string) {
     </p>
   `;
 
+  // Add statistics section
+  const stats = currentSettings?.statistics || { easy: 0, medium: 0, hard: 0 };
+  const total = stats.easy + stats.medium + stats.hard;
+
+  let statsDiv = document.getElementById('welcome-stats');
+  if (!statsDiv) {
+    statsDiv = document.createElement('div');
+    statsDiv.id = 'welcome-stats';
+    statsDiv.style.cssText = 'text-align: center; margin-top: 40px;';
+    linkedDiv.after(statsDiv);
+  }
+
+  statsDiv.innerHTML = `
+    <h3 style="font-size: 22px; font-weight: 600; margin-bottom: 15px; color: #fff;">Problems Solved: ${total}</h3>
+    <div style="display: flex; justify-content: center; gap: 40px;">
+      <span style="font-size: 16px;"><span style="color: #7ee787;">Easy:</span> <span style="color: #7ee787;">${stats.easy}</span></span>
+      <span style="font-size: 16px;"><span style="color: #ffa657;">Medium:</span> <span style="color: #ffa657;">${stats.medium}</span></span>
+      <span style="font-size: 16px;"><span style="color: #ff7b72;">Hard:</span> <span style="color: #ff7b72;">${stats.hard}</span></span>
+    </div>
+  `;
+
   document.getElementById('unlink-btn')?.addEventListener('click', async (e) => {
     e.preventDefault();
     // Clear repo from settings via chrome.storage directly
