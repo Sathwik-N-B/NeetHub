@@ -25,12 +25,10 @@ async function init() {
 
   if (settings.auth?.accessToken) {
     if (settings.repo?.owner && settings.repo?.name) {
-      // Already fully configured — show linked status
+      // Already fully configured — show LeetHub-style linked message
       document.getElementById('auth-section')!.style.display = 'none';
-      showSuccess(authStatus, `✓ Authenticated as ${settings.auth.username || 'GitHub user'}`);
-      showSuccess(repoStatus, `✓ Linked to ${settings.repo.owner}/${settings.repo.name}. Start NeetCoding now!`);
-      repoSection.classList.add('enabled');
-      getStartedBtn.style.display = 'none';
+      repoSection.innerHTML = '';
+      showLinkedState(settings.repo.owner, settings.repo.name);
       return;
     }
     
@@ -166,14 +164,8 @@ async function linkExistingRepo() {
   const response = await chrome.runtime.sendMessage({ type: 'save-repo', payload: repo });
   
   if (response?.ok) {
-    showSuccess(repoStatus, `✓ Successfully linked ${owner}/${name} to NeetHub. Start NeetCoding now!`);
-    
-    // Add unlink option
-    repoStatus.innerHTML += `<br><a href="#" style="color: #79c0ff; text-decoration: none; font-size: 12px;" id="unlink-btn">Linked the wrong repo? Unlink</a>`;
-    
-    setTimeout(() => {
-      window.close();
-    }, 2500);
+    repoSection.innerHTML = '';
+    showLinkedState(owner, name);
   } else {
     showError(repoStatus, response?.error || 'Failed to link repository');
     getStartedBtn.disabled = false;
@@ -231,14 +223,8 @@ async function createNewRepo() {
     const saveResponse = await chrome.runtime.sendMessage({ type: 'save-repo', payload: repo });
     
     if (saveResponse?.ok) {
-      showSuccess(repoStatus, `✓ Successfully created and linked ${repo.owner}/${repo.name} to NeetHub. Start NeetCoding now!`);
-      
-      // Add unlink option
-      repoStatus.innerHTML += `<br><a href="#" style="color: #79c0ff; text-decoration: none; font-size: 12px;" id="unlink-btn">Linked the wrong repo? Unlink</a>`;
-      
-      setTimeout(() => {
-        window.close();
-      }, 2500);
+      repoSection.innerHTML = '';
+      showLinkedState(repo.owner, repo.name);
     } else{
       throw new Error(saveResponse?.error || 'Failed to save repository');
     }
@@ -263,4 +249,43 @@ function showError(el: HTMLElement, message: string) {
 function showInfo(el: HTMLElement, message: string) {
   el.className = 'status-message info show';
   el.textContent = message;
+}
+
+function showLinkedState(owner: string, name: string) {
+  const container = document.querySelector('.container') as HTMLElement;
+  
+  // Find or create the linked-message area
+  let linkedDiv = document.getElementById('linked-state');
+  if (!linkedDiv) {
+    linkedDiv = document.createElement('div');
+    linkedDiv.id = 'linked-state';
+    linkedDiv.style.cssText = 'text-align: center; margin-top: 20px;';
+    // Insert after separator
+    const separator = container.querySelector('.separator');
+    if (separator) {
+      separator.after(linkedDiv);
+    } else {
+      container.appendChild(linkedDiv);
+    }
+  }
+
+  linkedDiv.innerHTML = `
+    <p style="font-size: 16px; color: #7ee787; margin-bottom: 8px;">
+      Successfully linked <strong style="color: #fff;">${owner}/${name}</strong> to NeetHub. Start <strong style="color: #fff;">NeetCoding</strong> <span style="color: #7ee787;">now!</span>
+    </p>
+    <p style="font-size: 13px; color: #b3b3b3;">
+      Linked the wrong repo? <a href="#" id="unlink-btn" style="color: #fff; font-weight: 600; text-decoration: none;">Unlink</a>
+    </p>
+  `;
+
+  document.getElementById('unlink-btn')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    // Clear repo from settings via chrome.storage directly
+    const result = await chrome.storage.local.get('settings');
+    const settings = result.settings || {};
+    delete settings.repo;
+    await chrome.storage.local.set({ settings });
+    // Reload to show setup form again
+    window.location.reload();
+  });
 }
