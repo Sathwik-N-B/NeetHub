@@ -89,7 +89,6 @@ function formatCodeFile(submission: SubmissionPayload): string {
 }
 
 function formatReadme(submission: SubmissionPayload): string {
-  const questionUrl = submission.url || '';
   const title = submission.title || 'Problem';
   const difficulty = submission.difficulty || 'Unknown';
   let description = submission.description || '';
@@ -98,7 +97,7 @@ function formatReadme(submission: SubmissionPayload): string {
   description = cleanDescription(description);
 
   // Match LeetCode format: title, difficulty, and description
-  return `<h2><a href="${questionUrl}">${title}</a></h2><h3>${difficulty}</h3><hr>${description}`;
+  return `<h2>${title}</h2><h3>${difficulty}</h3><hr>${description}`;
 }
 
 function cleanDescription(html: string): string {
