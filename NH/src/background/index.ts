@@ -1,5 +1,5 @@
 import { commitSubmission, ensureRepo, type SubmissionPayload } from '../lib/github';
-import { clearAuth, getSettings, saveSettings, type RepoConfig } from '../lib/storage';
+import { clearAuth, getSettings, saveSettings, type ProblemStatistics, type RepoConfig } from '../lib/storage';
 import { error, log, warn } from '../lib/logger';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -107,6 +107,7 @@ async function handleSubmission(submission: SubmissionPayload) {
   try {
     await ensureRepo(settings.auth.accessToken, settings.repo);
     await commitSubmission(settings.auth.accessToken, settings.repo, submission);
+    await incrementDifficultyStatistics(submission.difficulty);
     log('Submission pushed');
     void setBadge('success');
     return { ok: true };
@@ -115,6 +116,33 @@ async function handleSubmission(submission: SubmissionPayload) {
     void setBadge('error');
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+function toDifficultyBucket(difficulty?: string): keyof ProblemStatistics | undefined {
+  if (!difficulty) return undefined;
+  const normalized = difficulty.trim().toLowerCase();
+  if (normalized.includes('easy')) return 'easy';
+  if (normalized.includes('medium')) return 'medium';
+  if (normalized.includes('hard')) return 'hard';
+  return undefined;
+}
+
+async function incrementDifficultyStatistics(difficulty?: string): Promise<void> {
+  const bucket = toDifficultyBucket(difficulty);
+  if (!bucket) return;
+
+  const settings = await getSettings();
+  const current: ProblemStatistics = settings.statistics ?? { easy: 0, medium: 0, hard: 0 };
+
+  const next: ProblemStatistics = {
+    ...current,
+    [bucket]: current[bucket] + 1,
+  };
+
+  await saveSettings({
+    ...settings,
+    statistics: next,
+  });
 }
 
 async function setBadge(state: 'success' | 'error') {

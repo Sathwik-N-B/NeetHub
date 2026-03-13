@@ -742,15 +742,52 @@ function extractTitleFromDoc(doc: Document): string | undefined {
   return title || undefined;
 }
 
+function normalizeDifficultyLabel(value?: string): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized.includes('easy')) return 'Easy';
+  if (normalized.includes('medium')) return 'Medium';
+  if (normalized.includes('hard')) return 'Hard';
+  return undefined;
+}
+
+function extractDifficultyFromElement(el?: Element | null): string | undefined {
+  if (!el) return undefined;
+
+  const fromText = normalizeDifficultyLabel(el.textContent ?? '');
+  if (fromText) return fromText;
+
+  const className = el.getAttribute('class') ?? '';
+  const fromClass = normalizeDifficultyLabel(className);
+  if (fromClass) return fromClass;
+
+  const dataDifficulty = el.getAttribute('data-difficulty') ?? '';
+  const fromData = normalizeDifficultyLabel(dataDifficulty);
+  if (fromData) return fromData;
+
+  const ariaLabel = el.getAttribute('aria-label') ?? '';
+  return normalizeDifficultyLabel(ariaLabel);
+}
+
 function extractDifficultyFromDoc(doc: Document): string | undefined {
-  const difficulty = doc.querySelector('.difficulty, [data-difficulty]')?.textContent?.trim();
-  if (difficulty) return difficulty;
+  const selectors = [
+    'span.difficulty-pill',
+    '[class*="difficulty-pill"]',
+    '[class*="difficulty"]',
+    '[data-difficulty]',
+    '.badge',
+  ];
+
+  for (const selector of selectors) {
+    const nodes = doc.querySelectorAll(selector);
+    for (const node of Array.from(nodes)) {
+      const difficulty = extractDifficultyFromElement(node);
+      if (difficulty) return difficulty;
+    }
+  }
 
   const text = doc.body?.innerText || '';
-  if (text.includes('Easy')) return 'Easy';
-  if (text.includes('Medium')) return 'Medium';
-  if (text.includes('Hard')) return 'Hard';
-  return undefined;
+  return normalizeDifficultyLabel(text);
 }
 
 function extractDescriptionFromDoc(doc: Document): string | undefined {
@@ -799,6 +836,8 @@ function extractPageNumber(): string | undefined {
 function extractDifficulty(): string | undefined {
   // Try common selectors for difficulty badge/tag
   const selectors = [
+    'span.difficulty-pill',
+    '[class*="difficulty-pill"]',
     '[class*="difficulty"]',
     '[class*="Difficulty"]',
     '[data-difficulty]',
@@ -806,20 +845,17 @@ function extractDifficulty(): string | undefined {
   ];
 
   for (const sel of selectors) {
-    const el = document.querySelector(sel);
-    const text = el?.textContent?.trim().toLowerCase();
-    if (text === 'easy' || text === 'medium' || text === 'hard') {
-      return text.charAt(0).toUpperCase() + text.slice(1);
+    const elements = document.querySelectorAll(sel);
+    for (const el of Array.from(elements)) {
+      const difficulty = extractDifficultyFromElement(el);
+      if (difficulty) {
+        return difficulty;
+      }
     }
   }
 
   // Fallback: search for difficulty in page text
-  const bodyText = document.body?.innerText || '';
-  if (bodyText.match(/\bEasy\b/)) return 'Easy';
-  if (bodyText.match(/\bMedium\b/)) return 'Medium';
-  if (bodyText.match(/\bHard\b/)) return 'Hard';
-
-  return undefined;
+  return normalizeDifficultyLabel(document.body?.innerText || '');
 }
 
 function extractProblemDescription(): string | undefined {
