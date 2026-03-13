@@ -2,9 +2,8 @@ import type { SubmissionPayload } from '../lib/github';
 import type { Settings } from '../lib/storage';
 
 // Inline logger functions to avoid import issues in content script
-function log(...args: unknown[]) {
-  console.log('[NeetHub]', ...args);
-}
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function log(..._args: unknown[]) {}
 
 function warn(...args: unknown[]) {
   console.warn('[NeetHub]', ...args);
@@ -34,6 +33,7 @@ let currentProblemSlug: string | null = null; // Track current problem to reset 
 let toolbarButtonState: 'idle' | 'pushing' | 'success' | 'error' = 'idle';
 let lastRequestLanguage: string | undefined; // Capture language from API request
 let lastCapturedCode: string | undefined; // Capture code from network request body (LeetHub approach)
+let pendingPushKeys = new Set<string>(); // Prevent concurrent duplicate auto-pushes
 
 // Ensure DOM is ready before injecting
 function initializeExtension() {
@@ -75,6 +75,21 @@ window.addEventListener('message', (event) => {
       log('Captured language from main-world interceptor:', data.lang);
     }
     return;
+
+    // Handle acceptance result captured from main-world interceptor response
+    if (data.source === 'neethub-main-world' && data.type === 'captured-submission-result') {
+      if (data.isAccepted) {
+        if (data.runtime || data.memory) {
+          capturedMetricsFromApi = {
+            runtime: data.runtime as string | undefined,
+            memory: data.memory as string | undefined,
+          };
+        }
+        // Trigger push directly from API response — more reliable than DOM polling
+        setTimeout(() => void autoTriggerPush(), 500);
+      }
+      return;
+    }
   }
 
   // Legacy: passive listener for manual injections from page context
@@ -190,16 +205,19 @@ async function autoTriggerPush() {
   };
 
   // Check for duplicates
-  if (isRecent(submission)) {
-    log('Auto-push skipped: duplicate submission');
-    return;
+  // Guard against committed duplicates and concurrent in-flight pushes
+  if (isRecent(submission)) return;
+  const pushKey = buildKey(submission);
+  if (pendingPushKeys.has(pushKey)) return;
+  pendingPushKeys.add(pushKey);
+
+  try {
+    const enrichedSubmission = await enrichSubmissionPayload(submission);
+    lastAcceptedSubmission = enrichedSubmission;
+    await pushSubmission(enrichedSubmission, 'auto-trigger', true);
+  } finally {
+    pendingPushKeys.delete(pushKey);
   }
-
-  const enrichedSubmission = await enrichSubmissionPayload(submission);
-  lastAcceptedSubmission = enrichedSubmission;
-
-  log('Auto-triggering push for:', enrichedSubmission.title, 'Language:', enrichedSubmission.language);
-  void pushSubmission(enrichedSubmission, 'auto-trigger', true);
 }
 
 // NeetCode endpoints observed in DevTools
@@ -233,29 +251,7 @@ function urlLooksLikeSubmission(url?: string): boolean {
   return isSubmission;
 }
 
-function debugCapture(url: string, requestBody: unknown, responseData: unknown) {
-  try {
-    console.group('[NeetHub] Captured NeetCode API');
-    console.info('URL:', url);
-    console.info('Request body:', requestBody);
-    console.info('Response:', responseData);
-    
-    // Log acceptance detection
-    if (responseData && typeof responseData === 'object') {
-      const root = responseData as Record<string, unknown>;
-      const data = root.data;
-      if (data && typeof data === 'object') {
-        const single = data as Record<string, unknown>;
-        const status = single.status as Record<string, unknown> | undefined;
-        if (status?.description) {
-          console.info('Status description:', status.description);
-        }
-      }
-    }
-    
-    console.groupEnd();
-  } catch {}
-}
+
 
 function injectToolbarButton() {
   // Wait a bit for the page to fully render, then keep trying
@@ -306,17 +302,6 @@ function attemptToolbarInjection() {
 
   log('Attempting toolbar injection...');
 
-  // Debug: Log all elements with data-tooltip
-  const allTooltips = document.querySelectorAll('[data-tooltip]');
-  if (allTooltips.length > 0) {
-    log('Found elements with data-tooltip:', Array.from(allTooltips).map(el => ({
-      tooltip: el.getAttribute('data-tooltip'),
-      tagName: el.tagName,
-      href: el.getAttribute('href'),
-      classes: el.className
-    })));
-  }
-
   // Find the Notes button - try multiple selectors
   let notesBtn = document.querySelector('[data-tooltip="Notes"]');
   
@@ -343,14 +328,6 @@ function attemptToolbarInjection() {
     log('Notes button not found yet...');
     return;
   }
-
-  log('Found Notes button!', {
-    tagName: notesBtn.tagName,
-    href: notesBtn.getAttribute('href'),
-    classes: notesBtn.className,
-    parent: notesBtn.parentElement?.tagName,
-    parentClasses: notesBtn.parentElement?.className
-  });
 
   // Create the button
   const container = document.createElement('div');
@@ -1470,7 +1447,6 @@ async function tryCaptureFromResponse(response: Response, url?: string, init?: R
       log('NeetHub: Submission detected by request body content');
     }
     log('NeetHub: Calling handleCandidate from fetch');
-    debugCapture(url ?? '', requestBody, data);
     handleCandidate(data, url ?? '', requestBody);
   } catch (err) {
     warn('NeetHub: failed to parse response json', err);
@@ -1499,7 +1475,6 @@ function tryCaptureFromText(text: string, url?: string, requestData?: unknown) {
   try {
     const data = JSON.parse(text);
     log('NeetHub: Calling handleCandidate from XHR');
-    debugCapture(url ?? '', requestData, data);
     handleCandidate(data, url ?? '', requestData);
   } catch (err) {
     // ignore non-JSON
@@ -1795,10 +1770,7 @@ function getTimestamp(obj: Record<string, unknown>, keys: string[]): number | un
   return undefined;
 }
 
-// Deprecated; replaced by urlLooksLikeSubmission
-function isLikelySubmissionUrl(url?: string): boolean {
-  return urlLooksLikeSubmission(url);
-}
+
 
 function getUrl(input: RequestInfo | URL): string | undefined {
   if (typeof input === 'string') return input;

@@ -1,11 +1,10 @@
-import { error, log } from './logger';
+import { error } from './logger';
 import type { RepoConfig } from './storage';
 
 export async function ensureRepo(token: string, repo: RepoConfig): Promise<void> {
   const existing = await fetchGitHub<{ default_branch: string }>(`/repos/${repo.owner}/${repo.name}`, token);
 
   if (!existing.ok && existing.status === 404) {
-    log('Repository missing, creating...');
     const createResponse = await fetchGitHub(
       `/user/repos`,
       token,

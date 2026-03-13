@@ -1,6 +1,6 @@
 import { commitSubmission, ensureRepo, type SubmissionPayload } from '../lib/github';
 import { clearAuth, getSettings, saveSettings, type ProblemStatistics, type RepoConfig } from '../lib/storage';
-import { error, log, warn } from '../lib/logger';
+import { error, warn } from '../lib/logger';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   void handleMessage(message, sender).then(sendResponse).catch((err) => {
@@ -53,8 +53,6 @@ async function handleOAuthComplete(
       ...settings,
       auth: { accessToken: token, username },
     });
-    log(`GitHub OAuth complete for ${username}`);
-
     // Clear pipe flag
     await chrome.storage.local.set({ pipe_neethub: false });
 
@@ -108,7 +106,6 @@ async function handleSubmission(submission: SubmissionPayload) {
     await ensureRepo(settings.auth.accessToken, settings.repo);
     await commitSubmission(settings.auth.accessToken, settings.repo, submission);
     await incrementDifficultyStatistics(submission.difficulty);
-    log('Submission pushed');
     void setBadge('success');
     return { ok: true };
   } catch (err) {
