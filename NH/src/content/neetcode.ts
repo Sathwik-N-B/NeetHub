@@ -34,6 +34,7 @@ let currentProblemSlug: string | null = null; // Track current problem to reset 
 let toolbarButtonState: 'idle' | 'pushing' | 'success' | 'error' = 'idle';
 let lastRequestLanguage: string | undefined; // Capture language from API request
 let lastCapturedCode: string | undefined; // Capture code from network request body (LeetHub approach)
+let cachedProblemDescription: string | undefined;
 
 // Ensure DOM is ready before injecting
 function initializeExtension() {
@@ -43,6 +44,11 @@ function initializeExtension() {
 
     // Listen for Submit button clicks
     attachSubmitButtonListener();
+
+    // Cache problem statement early so submit-time extraction remains reliable
+    refreshCachedProblemDescription();
+    setTimeout(refreshCachedProblemDescription, 1200);
+    setTimeout(refreshCachedProblemDescription, 3000);
 
     log('NeetHub initialized');
   } catch (err) {
@@ -186,7 +192,7 @@ async function autoTriggerPush() {
     url,
     problemNumber: extractPageNumber(),
     difficulty: extractDifficulty(),
-    description: extractProblemDescription(),
+    description: getBestProblemDescription(),
   };
 
   // Check for duplicates
@@ -289,9 +295,12 @@ function checkAndResetProblemState() {
     lastAcceptedSubmission = null;
     lastFailedSubmission = null;
     isMonitoringSubmission = false;
+    cachedProblemDescription = undefined;
+    refreshCachedProblemDescription();
   } else if (currentSlug && !currentProblemSlug) {
     // First problem load
     currentProblemSlug = currentSlug;
+    refreshCachedProblemDescription();
   }
 }
 
@@ -655,6 +664,8 @@ async function enrichSubmissionPayload(payload: SubmissionPayload): Promise<Subm
     problemNumber = problemNumber || info.problemNumber;
   }
 
+  description = description || getBestProblemDescription();
+
   // Fallback: if still no title, format from slug
   if (!title && slug) {
     title = slug
@@ -790,31 +801,69 @@ function extractDifficultyFromDoc(doc: Document): string | undefined {
   return normalizeDifficultyLabel(text);
 }
 
-function extractDescriptionFromDoc(doc: Document): string | undefined {
+function scoreDescriptionCandidate(text: string): number {
+  const normalized = text.toLowerCase();
+  let score = text.length;
+  if (normalized.includes('example')) score += 200;
+  if (normalized.includes('constraints')) score += 200;
+  if (normalized.includes('input')) score += 80;
+  if (normalized.includes('output')) score += 80;
+  if (normalized.includes('follow up')) score += 60;
+  if (normalized.includes('companies') || normalized.includes('hints')) score -= 120;
+  return score;
+}
+
+function isLikelyProblemDescriptionText(text: string): boolean {
+  if (text.length < 140) return false;
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes('example') ||
+    normalized.includes('constraints') ||
+    (normalized.includes('input') && normalized.includes('output'))
+  );
+}
+
+function extractDescriptionFromRoot(root: ParentNode): string | undefined {
   const selectors = [
-    'app-article',  // Main problem content container on NeetCode
+    'app-article',
+    'app-prompt',
     '.question-tab .question-content',
     '.question-tab .problem-content',
     '.question-tab .prompt',
-    'app-prompt',
     '.question-tab',
+    '[class*="problem-description"]',
+    '[class*="question-content"]',
+    '[class*="problemDescription"]',
+    '[data-cy="question-detail-main-tabs"]',
+    'article',
+    'main',
   ];
 
+  let bestHtml: string | undefined;
+  let bestScore = -1;
+
   for (const selector of selectors) {
-    let el = doc.querySelector(selector);
-    if (!el) continue;
-    
-    const text = el.textContent?.toLowerCase() ?? '';
-    if (text.length < 100) continue;
-    if (text.includes('submission') && text.includes('accepted')) continue;
-    
-    let html = el.innerHTML.trim();
-    if (!html || html.length < 100) continue;
-    
-    return html;
+    const nodes = root.querySelectorAll(selector);
+    for (const node of Array.from(nodes)) {
+      const html = (node as Element).innerHTML?.trim();
+      if (!html || html.length < 120) continue;
+
+      const text = ((node.textContent ?? '').replace(/\s+/g, ' ').trim());
+      if (!isLikelyProblemDescriptionText(text)) continue;
+
+      const score = scoreDescriptionCandidate(text);
+      if (score > bestScore) {
+        bestScore = score;
+        bestHtml = html;
+      }
+    }
   }
 
-  return undefined;
+  return bestHtml;
+}
+
+function extractDescriptionFromDoc(doc: Document): string | undefined {
+  return extractDescriptionFromRoot(doc);
 }
 
 function extractNumberFromTitle(title?: string): string | undefined {
@@ -859,26 +908,23 @@ function extractDifficulty(): string | undefined {
 }
 
 function extractProblemDescription(): string | undefined {
-  // Try to extract the full problem description HTML from current page
-  const selectors = [
-    'app-article',  // Main problem content container on NeetCode
-    '[class*="problem-description"]',
-    '[class*="question-content"]',
-    '[class*="problemDescription"]',
-    '.description',
-    '[data-cy="question-detail-main-tabs"]',
-    'app-prompt',
-    '.question-tab',
-  ];
+  return extractDescriptionFromRoot(document);
+}
 
-  for (const sel of selectors) {
-    const el = document.querySelector(sel);
-    if (el && el.innerHTML && el.innerHTML.length > 100) {
-      return el.innerHTML;
-    }
+function refreshCachedProblemDescription() {
+  const current = extractProblemDescription();
+  if (current && current.length > 120) {
+    cachedProblemDescription = current;
   }
+}
 
-  return undefined;
+function getBestProblemDescription(): string | undefined {
+  const current = extractProblemDescription();
+  if (current && current.length > 120) {
+    cachedProblemDescription = current;
+    return current;
+  }
+  return cachedProblemDescription;
 }
 
 // Network response storage for metrics captured from API
@@ -1648,7 +1694,7 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
           url: buildProblemUrl(slug),
           problemNumber: extractPageNumber(),
           difficulty: extractDifficulty(),
-          description: extractProblemDescription(),
+          description: getBestProblemDescription(),
         },
         isAccepted: true,
       };
@@ -1702,7 +1748,7 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
             url: buildProblemUrl(slug),
             problemNumber: extractPageNumber(),
             difficulty: extractDifficulty(),
-            description: extractProblemDescription(),
+            description: getBestProblemDescription(),
           },
           isAccepted: true,
         };
@@ -1749,7 +1795,7 @@ function extractSubmission(data: unknown, requestData?: unknown): SubmissionExtr
           url: buildProblemUrl(slug),
           problemNumber: extractPageNumber(),
           difficulty: extractDifficulty(),
-          description: extractProblemDescription(),
+          description: getBestProblemDescription(),
         },
         isAccepted: true,
       };

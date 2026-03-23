@@ -92,10 +92,14 @@ function formatReadme(submission: SubmissionPayload): string {
   const questionUrl = submission.url || '';
   const title = submission.title || 'Problem';
   const difficulty = submission.difficulty || 'Unknown';
-  let description = submission.description || '';
+  const rawDescription = submission.description || '';
+  let description = rawDescription;
 
   // Clean description of hints and metadata
   description = cleanDescription(description);
+  if (!description || description.length < 80) {
+    description = rawDescription;
+  }
 
   // Match LeetCode format: title, difficulty, and description
   return `<h2><a href="${questionUrl}">${title}</a></h2><h3>${difficulty}</h3><hr>${description}`;
@@ -105,18 +109,14 @@ function cleanDescription(html: string): string {
   if (!html) return '';
   
   let cleaned = html;
+  const original = html.trim();
+  const originalTextLength = original.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length;
   
   // Remove details elements with hint or company tags accordion classes
   cleaned = cleaned.replace(/<details[^>]*class="[^"]*(?:hint|company-tags)-accordion[^"]*"[^>]*>[\s\S]*?<\/details>/gi, '');
   
   // Remove br tags that are used as separators (multiple consecutive brs)
   cleaned = cleaned.replace(/<br\s*\/?>\s*<br\s*\/?>/gi, '');
-  
-  // Remove standalone Company Tags, Hints, Topics text sections at the end
-  cleaned = cleaned.replace(/(?:<div[^>]*>)*\s*(?:Company\s+)?Tags[\s\S]*$/gi, '');
-  cleaned = cleaned.replace(/(?:<div[^>]*>)*\s*Recommended[\s\S]*$/gi, '');
-  cleaned = cleaned.replace(/(?:<div[^>]*>)*\s*Hint\s+\d+[\s\S]*$/gi, '');
-  cleaned = cleaned.replace(/(?:<div[^>]*>)*\s*Topics[\s\S]*$/gi, '');
   
   // Remove tab elements and custom hint components
   cleaned = cleaned.replace(/<[a-z]+-tabs[^>]*>[\s\S]*?<\/[a-z]+-tabs>/gi, '');
@@ -125,8 +125,18 @@ function cleanDescription(html: string): string {
   // Remove hidden buttons and elements
   cleaned = cleaned.replace(/<button[^>]*style="[^"]*display:\s*none[^"]*"[^>]*>[\s\S]*?<\/button>/gi, '');
   cleaned = cleaned.replace(/<[a-z]+-[^>]*style="[^"]*display:\s*none[^"]*"[^>]*>[\s\S]*?<\/[a-z]+-[^>]*>/gi, '');
+
+  // Remove scripts/styles only
+  cleaned = cleaned.replace(/<script[\s\S]*?<\/script>/gi, '');
+  cleaned = cleaned.replace(/<style[\s\S]*?<\/style>/gi, '');
   
   cleaned = cleaned.trim();
+
+  // Safety net: if sanitization removes too much content, keep original statement
+  const cleanedTextLength = cleaned.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length;
+  if (!cleaned || cleanedTextLength < Math.max(80, Math.floor(originalTextLength * 0.35))) {
+    return original;
+  }
   
   return cleaned;
 }
