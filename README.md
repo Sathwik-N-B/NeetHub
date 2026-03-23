@@ -121,6 +121,3 @@ Chrome extension that brings LeetHub-style automation to NeetCode: automatically
 - Language detection priority: dropdown button → localStorage → Monaco API → code pattern matching
 - Folder structure uses zero-padded problem numbers: `0001-two-sum`, `0125-valid-palindrome`
 
----
-
-**Inspired by LeetHub-3.0** | Built for NeetCode users
