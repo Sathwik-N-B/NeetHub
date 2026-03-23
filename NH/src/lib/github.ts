@@ -121,6 +121,22 @@ function cleanDescription(html: string): string {
   // Remove tab elements and custom hint components
   cleaned = cleaned.replace(/<[a-z]+-tabs[^>]*>[\s\S]*?<\/[a-z]+-tabs>/gi, '');
   cleaned = cleaned.replace(/<app-hint[^>]*>[\s\S]*?<\/app-hint>/gi, '');
+
+  // Remove top nav list: Question / Solution / Submissions / Discuss
+  cleaned = cleaned.replace(/<ul[^>]*>[\s\S]*?<\/ul>/gi, (block) => {
+    const text = block.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase();
+    const hasNavLinks =
+      text.includes('question') &&
+      text.includes('solution') &&
+      text.includes('submissions') &&
+      text.includes('discuss');
+    return hasNavLinks ? '' : block;
+  });
+
+  // Remove interview metadata
+  cleaned = cleaned.replace(/Seen\s+this\s+question\s+in\s+a\s+real\s+interview\?/gi, '');
+  cleaned = cleaned.replace(/\bYes\b\s*\bNo\b/gi, '');
+  cleaned = cleaned.replace(/Acceptance\s*Rate\s*\d+(?:\.\d+)?\s*%/gi, '');
   
   // Remove hidden buttons and elements
   cleaned = cleaned.replace(/<button[^>]*style="[^"]*display:\s*none[^"]*"[^>]*>[\s\S]*?<\/button>/gi, '');
@@ -134,7 +150,8 @@ function cleanDescription(html: string): string {
 
   // Safety net: if sanitization removes too much content, keep original statement
   const cleanedTextLength = cleaned.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length;
-  if (!cleaned || cleanedTextLength < Math.max(80, Math.floor(originalTextLength * 0.35))) {
+  const cleanedLooksLikeProblem = /\b(example|constraints|given|return|input|output)\b/i.test(cleaned);
+  if (!cleaned || (!cleanedLooksLikeProblem && cleanedTextLength < Math.max(80, Math.floor(originalTextLength * 0.35)))) {
     return original;
   }
   
